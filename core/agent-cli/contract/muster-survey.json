@@ -1,0 +1,6 @@
+{"area": "muster", "owner": "m8", "entries": [
+  {"path": ["muster", "survey"], "meaning": "Read an existing project first and write the drafts: glossary, core objects with their states, detected standards, candidate preserve journeys and the gap list the first round asks about.",
+   "roles": ["overwatch"], "args": [{"name": "project", "type": "text", "required": true}, {"name": "ticket", "type": "text", "required": false}], "changes": true,
+   "method": "POST", "form": "bin/jg-muster-survey.sh <project> [--ticket <id>]", "repeat_key": "project", "exits": {"0": 0, "1": 1, "2": 2, "4": 4},
+   "schema": "muster.survey.v1", "script": "bin/jg-muster-survey.sh", "operation": "-", "aliases": []}
+]}

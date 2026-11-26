@@ -1,0 +1,59 @@
+{"area": "planning", "owner": "a1", "entries": [
+  {"path": ["plan", "war-room", "start"], "meaning": "Check the ticket's Muster and start its variant Recons.", "roles": ["overwatch"],
+   "args": [
+     {"name": "ticket", "type": "text", "required": true},
+     {"name": "name", "type": "text", "required": true},
+     {"name": "angles", "type": "text", "required": true},
+     {"name": "depth", "type": "text", "required": true},
+     {"name": "harness", "type": "text", "required": true},
+     {"name": "model", "type": "text", "required": true},
+     {"name": "effort", "type": "text", "required": true},
+     {"name": "synthesis-depth", "type": "text", "required": false},
+     {"name": "no-variant-critics", "type": "flag", "required": false},
+     {"name": "exception", "type": "flag", "required": false}
+   ],
+   "changes": true, "method": "POST",
+   "form": "bin/jg-war-room.sh start <ticket> --project <name> --angles <angles> --depth <depth> --harness <harness> --model <model> --effort <effort> [--synthesis-depth <synthesis-depth>] [--no-variant-critics] [--exception]", "repeat_key": "ticket",
+   "exits": {"0": 0, "1": 1, "2": 2}, "schema": "plan.war-room.start.v1",
+   "script": "bin/jg-war-room.sh", "operation": "start",
+   "aliases": []},
+  {"path": ["plan", "war-room", "lite"], "meaning": "Check the ticket's Muster and start its synthesis Recon.", "roles": ["overwatch"],
+   "args": [
+     {"name": "ticket", "type": "text", "required": true},
+     {"name": "name", "type": "text", "required": false},
+     {"name": "harness", "type": "text", "required": false},
+     {"name": "model", "type": "text", "required": false},
+     {"name": "effort", "type": "text", "required": false},
+     {"name": "exception", "type": "flag", "required": false}
+   ],
+   "changes": true, "method": "POST",
+   "form": "bin/jg-war-room.sh lite <ticket> [--project <name>] [--harness <harness>] [--model <model>] [--effort <effort>] [--exception]", "repeat_key": "ticket",
+   "exits": {"0": 0, "1": 1, "2": 2}, "schema": "plan.war-room.lite.v1",
+   "script": "bin/jg-war-room.sh", "operation": "lite",
+   "aliases": []},
+  {"path": ["plan", "war-room", "check"], "meaning": "Read the recorded depth and verify any approval required to start War Room.", "roles": ["overwatch"],
+   "args": [
+     {"name": "ticket", "type": "text", "required": true}
+   ],
+   "changes": false, "method": "GET",
+   "form": "bin/jg-war-room.sh check <ticket>", "repeat_key": null,
+   "exits": {"0": 0, "1": 1, "2": 2}, "schema": "plan.war-room.check.v1",
+   "script": "bin/jg-war-room.sh", "operation": "check",
+   "aliases": []},
+  {"path": ["plan", "blitz", "start"], "meaning": "Check the plan against its approved Muster and start the slices.", "roles": ["overwatch"],
+   "args": [
+     {"name": "plan", "type": "path", "required": true},
+     {"name": "harness", "type": "text", "required": true},
+     {"name": "model", "type": "text", "required": true},
+     {"name": "effort", "type": "text", "required": true},
+     {"name": "order", "type": "text", "required": false},
+     {"name": "agents", "type": "text", "required": false},
+     {"name": "with-others", "type": "flag", "required": false},
+     {"name": "wait", "type": "flag", "required": false}
+   ],
+   "changes": true, "method": "POST",
+   "form": "bin/jg-swarm.sh start <plan> --harness <harness> --model <model> --effort <effort> [--order <order>] [--agents <agents>] [--with-others] [--wait]", "repeat_key": "plan",
+   "exits": {"0": 0, "1": 1, "2": 2}, "schema": "plan.blitz.start.v1",
+   "script": "bin/jg-swarm.sh", "operation": "start",
+   "aliases": ["plan swarm start"]}
+]}

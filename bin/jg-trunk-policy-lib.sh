@@ -16,7 +16,7 @@
 #   gate-lint             bin/jg-lint.sh --changed-base HEAD^   the lint every landing passes, over the changed files only
 #   gate-full             the landing's tests: the CI invariants that need no network (no tracked personal
 #                         paths, no committed binaries, regression coverage), then only the test scripts
-#                         the changed files map to, in eight shards run side by side (HEAD^ is the trunk tip:
+#                         the changed files map to, in eight shards with bounded concurrency (HEAD^ is the trunk tip:
 #                         the lander rebases the lane first)
 #   landing-gate          none        none: a landing runs the lint and no tests; the line's verify (one run for a batch, off the landing path)
 #                                     is the one test run, and a red it finds is reported against the commit that caused it (never reverted). tests: the landing also runs
@@ -74,7 +74,7 @@ _JG_TRUNK_PROTECTED='bin/jg-merge-* bin/jg-pr-merge.sh bin/jg-trunk* bin/jg-dod-
 # shellcheck disable=SC2016 # the command substitution runs in the gate's shell, not here
 _JG_TRUNK_GATE_VERIFY='test -z "$(git ls-files -- data state config projects .no-mistakes)" && bin/jg-committed-binary-check.sh && bin/jg-test-run.sh --check-coverage && bin/jg-test-run.sh --all'
 # The landing's tests are the same invariants with the changed files' tests in place of the whole suite: the
-# fast required set, its eight shards run side by side (bin/jg-test-run.sh --required-shards), one timing file
+# fast required set, its eight shards share the host token pool (bin/jg-test-run.sh --required-shards), one timing file
 # per shard and their aggregate under the lander's JG_TRUNK_GATE_OUTPUT directory.
 # shellcheck disable=SC2016 # the command substitution runs in the gate's shell, not here
 _JG_TRUNK_GATE_FULL="${_JG_TRUNK_GATE_VERIFY% --all}"' --required-shards HEAD^ "${JG_TRUNK_GATE_OUTPUT:-$(mktemp -d)}"'

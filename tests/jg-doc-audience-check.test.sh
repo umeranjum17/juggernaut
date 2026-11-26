@@ -9,6 +9,7 @@
 #   2. In a lab copy of the tracked tree, each drift the check owns is refused
 #      by name: a new unclassified prose file, an inventory entry for a file
 #      that is gone, a link to a missing file and a link to a missing heading.
+#   3. A link whose target holds a <placeholder> (a template's) is skipped.
 set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -46,3 +47,9 @@ refused "a link to a missing file" "unresolved local link in docs/item-store.md"
 
 printf '\nSee [gone](architecture.md#lab-missing-heading).\n' >> "$lab/docs/item-store.md"
 refused "a link to a missing heading" "unresolved local anchor in docs/item-store.md"
+
+printf '\nTemplate link [ADR](../adr/NNNN-<slug>.md).\n' >> "$lab/docs/item-store.md"
+out=$("$CHECK" --root "$lab" 2>&1) || fail "a link whose target holds a <placeholder> was refused: $out"
+pass "a link whose target holds a <placeholder> is skipped, not resolved"
+printf 'See [gone](lab-missing-target.md).\n' >> "$lab/docs/item-store.md"
+refused "a missing target beside a placeholder link" "unresolved local link in docs/item-store.md: lab-missing-target.md"

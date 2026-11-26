@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # done-done journey: drive the real bin/jg-bootstrap.sh install done-done on a clean throwaway HOME, for a
-# package that ships integrations/firstmate/ (done-done-axi 0.6.27, the pin) and for one that ships
+# package that ships integrations/firstmate/ and for one that ships
 # integrations/juggernaut/. Only npm is faked: its `root -g` names the package fixture and `install` succeeds.
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

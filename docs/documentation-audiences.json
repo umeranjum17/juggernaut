@@ -808,7 +808,31 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/muster/",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/muster-discovery.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/done-done-verify-suites/features/README.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/muster-workflow.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/muster-requirements.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/muster-use-cases.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/agent-cli-contract.md",
       "audience": "agent-runtime"
     },
     {
@@ -817,6 +841,18 @@
     },
     {
       "path": ".agents/skills/done-done-verify-suites/features/ask-outcomes.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/done-done-author-route.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/jg-recon-ready.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/idle-worker-redrive.md",
       "audience": "agent-runtime"
     },
     {
@@ -1084,6 +1120,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": ".agents/skills/done-done-verify-suites/features/fleet-refresh-and-delivery-repair.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/done-done-verify-suites/features/codex-lead-queued-wake.md",
       "audience": "agent-runtime"
     },
@@ -1313,6 +1353,38 @@
     },
     {
       "path": "tests/fixtures/item-store-owner-calls/",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "core/agent-cli/contract/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/agent-cli/inventory/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/loop-stall/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/standards/typescript-react/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/standards/typescript-react/fixtures/README.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/muster/",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/muster-approval/",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/muster-survey/",
       "audience": "maintainer-verification"
     }
   ]

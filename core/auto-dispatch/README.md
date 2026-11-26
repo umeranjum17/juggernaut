@@ -24,7 +24,7 @@ It prints nothing, so it wakes no one.
 The first reason that fits is the one written:
 
 1. no approval record;
-2. an open captain decision is linked to it (`bin/jg-captain-hold.sh blocking`; a failed read also stops it);
+2. an open captain decision is linked to it (one `bin/jg-captain-hold.sh blocking --batch` read for approved tickets each pass, with unreadable decisions stopping those tickets);
 3. it is not spawnable now (held, taken by a lane, closed, or another home's project);
 4. no brief at `data/<id>/brief.md`;
 5. the approval record has no route;
@@ -65,7 +65,9 @@ For each "would start" ticket it runs `bin/jg-spawn.sh <task> projects/<project>
 - the spawn's output is `data/auto-dispatch/<id>.log`, and the row is `starting`.
 
 The spawn keeps its own refusals (owner asks, plan tickets with no recorded yes, quota, pool).
-Before each start it asks `core/pool-reserve/reserve.sh admit` for a copy of the ticket's project (the lane limit and the two copies kept for a red fix). With no copy free the row says `no free copy`, nothing is spawned, the lead hears nothing, and a later beat starts it.
+The dispatcher asks `core/pool-reserve/reserve.sh admit` once per eligible project each pass (the lane limit and the two copies kept for a red fix).
+When that read finds no free copy, the row says `no free copy`, nothing is spawned for the project in that pass, and a later beat retries.
+Each spawn rechecks capacity when it is about to lease a copy.
 With the pool unreadable the row says `copy count unknown` instead (one row until the verdict changes), nothing is spawned, the lead hears nothing, and the next beat that can read the pool starts it.
 
 ## The spawn's result is the row

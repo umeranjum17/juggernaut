@@ -1,0 +1,1091 @@
+{
+  "area": "steering",
+  "owner": "e6steer",
+  "entries": [
+    {
+      "path": [
+        "radio",
+        "captain-say"
+      ],
+      "meaning": "Publish a summary to the captain channel",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-captain-say.sh [--key <slug>] [--link <url>] [--asks] <text...>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.captain-say.v1",
+      "script": "bin/jg-captain-say.sh",
+      "operation": "-",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "chat-transcribe",
+        "setup"
+      ],
+      "meaning": "Install the local transcription engine",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-chat-transcribe.sh setup",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.chat-transcribe.setup.v1",
+      "script": "bin/jg-chat-transcribe.sh",
+      "operation": "setup",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "chat-transcribe",
+        "run"
+      ],
+      "meaning": "Transcribe a WAV file",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-chat-transcribe.sh run <wav>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.chat-transcribe.run.v1",
+      "script": "bin/jg-chat-transcribe.sh",
+      "operation": "run",
+      "aliases": [],
+      "review_note": "Script help and run arm require <wav>; inventory omits it. The published form uses the real argument."
+    },
+    {
+      "path": [
+        "radio",
+        "chat-transcribe",
+        "status"
+      ],
+      "meaning": "Show whether the transcription engine is installed",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-chat-transcribe.sh status",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.chat-transcribe.status.v1",
+      "script": "bin/jg-chat-transcribe.sh",
+      "operation": "status",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "delivery-style",
+        "knob"
+      ],
+      "meaning": "Find the registry knob for a delivery word",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-delivery-style.sh knob <word>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.delivery-style.knob.v1",
+      "script": "bin/jg-delivery-style.sh",
+      "operation": "knob",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "delivery-style",
+        "task-mode"
+      ],
+      "meaning": "Find the task mode for a delivery word",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-delivery-style.sh task-mode <word>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.delivery-style.task-mode.v1",
+      "script": "bin/jg-delivery-style.sh",
+      "operation": "task-mode",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "delivery-tick"
+      ],
+      "meaning": "Check delivery records for unanswered steering",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-delivery-tick.sh <jg-home>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.delivery-tick.v1",
+      "script": "bin/jg-delivery-tick.sh",
+      "operation": "-",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "delivery",
+        "handled"
+      ],
+      "meaning": "Record that a worker acted on a message",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-delivery.sh handled <task> <seq> --evidence <kind:pointer>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.delivery.handled.v1",
+      "script": "bin/jg-delivery.sh",
+      "operation": "handled",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "delivery",
+        "failed"
+      ],
+      "meaning": "Record that a worker could not act on a message",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-delivery.sh failed <task> <seq> --reason <text>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.delivery.failed.v1",
+      "script": "bin/jg-delivery.sh",
+      "operation": "failed",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "delivery",
+        "show"
+      ],
+      "meaning": "Show steering delivery records",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-delivery.sh show <task> [<seq>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.delivery.show.v1",
+      "script": "bin/jg-delivery.sh",
+      "operation": "show",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "delivery",
+        "overdue"
+      ],
+      "meaning": "List steering that is overdue",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-delivery.sh overdue <task> [--after <seconds>] [--read] [--since <epoch>] [--until <epoch>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.delivery.overdue.v1",
+      "script": "bin/jg-delivery.sh",
+      "operation": "overdue",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "note"
+      ],
+      "meaning": "Capture a note from standard input",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-inbox.sh note [--request-id <id>] [--json] -",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.note.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "note",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "announce"
+      ],
+      "meaning": "Announce an inbox note",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-inbox.sh announce [--json] <id>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.announce.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "announce",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "approve"
+      ],
+      "meaning": "Approve a note for a ticket",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-inbox.sh approve <note-id> <ticket-id>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.approve.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "approve",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "primary-chat"
+      ],
+      "meaning": "Record a message from the primary chat",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-inbox.sh primary-chat <session-id> <seq> <text>...",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.primary-chat.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "primary-chat",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "reply"
+      ],
+      "meaning": "Reply to a note",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-inbox.sh reply [--json] <id> [--attach <path>]... -",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.reply.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "reply",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "followup"
+      ],
+      "meaning": "Send a follow-up reply",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-inbox.sh followup [--json] <id> [--attach <path>]... -",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.followup.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "followup",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "receipts"
+      ],
+      "meaning": "List note receipts",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-inbox.sh receipts [--after <cursor>] [--all-pending] [--all-handled] [--all-replies]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.receipts.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "receipts",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "ready"
+      ],
+      "meaning": "Check whether the inbox can receive notes",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-inbox.sh ready",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.ready.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "ready",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "say"
+      ],
+      "meaning": "Transcribe an audio note",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-inbox.sh say",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.say.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "say",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "status"
+      ],
+      "meaning": "Show the home status",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-inbox.sh status",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.status.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "status",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "ask"
+      ],
+      "meaning": "Ask a side question",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-inbox.sh ask <question>...",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.ask.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "ask",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "list"
+      ],
+      "meaning": "List pending inbox notes",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-inbox.sh list",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.list.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "list",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "asks"
+      ],
+      "meaning": "List captain requests",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-inbox.sh asks",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.asks.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "asks",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "outcomes"
+      ],
+      "meaning": "List recorded outcomes",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-inbox.sh outcomes",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.outcomes.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "outcomes",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "inbox",
+        "drain"
+      ],
+      "meaning": "Show or acknowledge inbox notes",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-inbox.sh drain [--ack <id>...]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.inbox.drain.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "drain",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "mail-check",
+        "arm"
+      ],
+      "meaning": "Schedule received-mail checks",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-mail-check.sh arm",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.mail-check.arm.v1",
+      "script": "bin/jg-mail-check.sh",
+      "operation": "arm",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "mail-check",
+        "disarm"
+      ],
+      "meaning": "Remove scheduled received-mail checks",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-mail-check.sh disarm",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.mail-check.disarm.v1",
+      "script": "bin/jg-mail-check.sh",
+      "operation": "disarm",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "mail",
+        "read"
+      ],
+      "meaning": "Read unseen mail",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-mail.sh read",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.mail.read.v1",
+      "script": "bin/jg-mail.sh",
+      "operation": "read",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "mail",
+        "send"
+      ],
+      "meaning": "Send a mail message",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-mail.sh send <to> <subject> <body|->",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.mail.send.v1",
+      "script": "bin/jg-mail.sh",
+      "operation": "send",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "mail",
+        "status"
+      ],
+      "meaning": "Show mail configuration and cursor",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-mail.sh status",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.mail.status.v1",
+      "script": "bin/jg-mail.sh",
+      "operation": "status",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "mail",
+        "poll"
+      ],
+      "meaning": "Check for new mail",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-mail.sh poll",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.mail.poll.v1",
+      "script": "bin/jg-mail.sh",
+      "operation": "poll",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "operational-input",
+        "encode"
+      ],
+      "meaning": "Encode operational input",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-operational-input.sh encode <kind>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.operational-input.encode.v1",
+      "script": "bin/jg-operational-input.sh",
+      "operation": "encode",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "operational-input",
+        "kind"
+      ],
+      "meaning": "Read the kind of operational input",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-operational-input.sh kind",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.operational-input.kind.v1",
+      "script": "bin/jg-operational-input.sh",
+      "operation": "kind",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "operational-input",
+        "classify"
+      ],
+      "meaning": "Classify operational input",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-operational-input.sh classify",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.operational-input.classify.v1",
+      "script": "bin/jg-operational-input.sh",
+      "operation": "classify",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "operational-input",
+        "body"
+      ],
+      "meaning": "Read the body of operational input",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-operational-input.sh body",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.operational-input.body.v1",
+      "script": "bin/jg-operational-input.sh",
+      "operation": "body",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "operational-input",
+        "record"
+      ],
+      "meaning": "Record operational input and return a doorbell",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-operational-input.sh record <kind>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.operational-input.record.v1",
+      "script": "bin/jg-operational-input.sh",
+      "operation": "record",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "operational-input",
+        "doorbell-kind"
+      ],
+      "meaning": "Read the kind of a doorbell record",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-operational-input.sh doorbell-kind",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.operational-input.doorbell-kind.v1",
+      "script": "bin/jg-operational-input.sh",
+      "operation": "doorbell-kind",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "operational-input",
+        "doorbell-shaped"
+      ],
+      "meaning": "Check whether input resembles a doorbell",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-operational-input.sh doorbell-shaped",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.operational-input.doorbell-shaped.v1",
+      "script": "bin/jg-operational-input.sh",
+      "operation": "doorbell-shaped",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "operational-input",
+        "open"
+      ],
+      "meaning": "Open an operational input record",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-operational-input.sh open <path>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.operational-input.open.v1",
+      "script": "bin/jg-operational-input.sh",
+      "operation": "open",
+      "aliases": [],
+      "review_note": "Confirmed by the script dispatch arm or its help; unsafe external effects are checked only at the argument boundary."
+    },
+    {
+      "path": [
+        "radio",
+        "peek"
+      ],
+      "meaning": "Read the tail of a worker endpoint",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-peek.sh <target> [<lines>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.peek.v1",
+      "script": "bin/jg-peek.sh",
+      "operation": "-",
+      "aliases": [],
+      "review_note": "GET changed a fixture home: jg-guard.sh removed state/.guard-watcher-stale-banner when peek was run with jg-missing."
+    }
+  ]
+}

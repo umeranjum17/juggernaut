@@ -73,16 +73,31 @@
 # bin/jg-watch.sh`: that pattern matches every juggernaut home's watcher
 # (squad_lead homes run the same script) and would kill siblings.
 #
-# --take-over <arm-pid>: own the cycle that arm <arm-pid> owns, for an owner
-# that left a successor cycle running through main's turn and now parks again
-# (bin/jg-supervision-host.sh). Only when this home's healthy watcher is that
-# arm's own child, it stops that watcher by its locked identity: a cycle that
-# delivered a reason before the stop landed reports it exactly as an attached
-# arm would, and otherwise this arm owns a fresh cycle as a plain arm does.
-# Recovery restoration follows docs/watcher-continuity.md "Generation reuse";
-# an unconfirmed stop leaves downtime for the fresh cycle's recovery check.
-# Any other watcher, or one that outlives the stop,
-# is attached to exactly as a plain arm attaches.
+# --take-over <arm-pid>: take over the cycle that arm <arm-pid> holds, for an
+# owner that left a successor cycle running through main's turn and now parks
+# again (bin/jg-supervision-host.sh). The watcher is never stopped: when
+# <arm-pid> is a live arm of this home (its state/.watch-arms record names its
+# identity), this arm sends it SIGUSR1, and that arm records a handed-over row
+# and exits without signalling its watcher. This arm then follows the same
+# watcher as an attached arm, so the lock, the beacon, and the recovery marker
+# never change hands. A watcher that delivered a reason during the hand-over
+# is reported exactly as an attached arm would report it. An arm that is not
+# this home's, or that outlives the request, is left alone, and this arm
+# attaches or starts exactly as a plain arm does.
+#
+# JG_WATCH_ARM_NO_FOLLOW=1: for an owner that reads only the status line and
+# drops the close (a detached start: bin/jg-claude-stop-autoarm.sh, the
+# sentinel). When a live cycle already exists, the arm prints its attached line
+# and exits 0 instead of following that cycle, because a follower whose close
+# nobody reads is only a second arm racing the cycle's owner. A cycle it starts
+# itself it still owns and waits on.
+#
+# An attached arm whose holder ended waits at most JG_ARM_HANDOFF_WINDOW
+# seconds (default 15, capped by the confirmation budget) for a successor to
+# claim the lock. A live, identity-matched claimant is followed even before its
+# first scan completes. With none in that window the close is resolved against
+# the delivery record at once, so a delivered wake is never held back for the
+# confirmation budget, which grows with every registered check.
 #
 # --stop: the same home-scoped stop without re-arming, for an owner that ends
 # its own supervision cycle on purpose (the supervision host's park boundary,
@@ -158,6 +173,9 @@ ATTACH_POLL=${JG_ARM_ATTACH_POLL:-2}
 # The beacon age at which the watcher's own re-arm evicts a live holder; an
 # attached arm follows a slow holder up to it (attach_and_wait).
 STALL_BOUND=$(jg_watcher_stall_bound)
+HANDOFF_WINDOW=${JG_ARM_HANDOFF_WINDOW:-15}
+case "$HANDOFF_WINDOW" in ''|*[!0-9]*) HANDOFF_WINDOW=15 ;; esac
+NO_FOLLOW=${JG_WATCH_ARM_NO_FOLLOW:-0}
 CYCLE_LOG="$STATE/.watch-cycle-exits.log"
 CYCLE_LOG_LOCK="$STATE/.watch-cycle-exits.lock"
 CYCLE_LOG_MAX_BYTES=${JG_WATCH_CYCLE_LOG_MAX_BYTES:-262144}
@@ -361,6 +379,31 @@ wait_for_healthy_successor() {
   done
 }
 
+# The successor an attached arm follows once its holder ended (header,
+# JG_ARM_HANDOFF_WINDOW): a healthy watcher, or a live identity-matched lock
+# holder that is not the ended one, still in its first scan. Sets HEALTHY_PID
+# and HEALTHY_IDENTITY to it; fails when none claims the lock in the window.
+await_successor_claim() {
+  local deadline window pid
+  arm_observation waiting "$cycle_watcher_pid"
+  window=$(jg_watcher_confirmation_budget "$STATE" "$WATCH" "$JG_HOME")
+  [ "$HANDOFF_WINDOW" -ge "$window" ] || window=$HANDOFF_WINDOW
+  deadline=$(( $(date +%s) + window + 1 ))
+  while :; do
+    if healthy_watcher; then arm_observation running none; return 0; fi
+    pid=$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)
+    if jg_pid_alive "$pid" && jg_watcher_lock_matches_pid "$STATE" "$WATCH" "$pid" "$JG_HOME" \
+      && [ "$JG_WATCHER_MATCHED_IDENTITY" != "$cycle_watcher_identity" ]; then
+      HEALTHY_PID=$pid
+      HEALTHY_IDENTITY=$JG_WATCHER_MATCHED_IDENTITY
+      arm_observation running none
+      return 0
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then arm_observation running none; return 1; fi
+    sleep 0.2
+  done
+}
+
 fail_unexplained_cycle() {
   echo "watcher: FAILED - cycle ended without an actionable reason"
   return 1
@@ -412,8 +455,9 @@ attached_holder_live() {
   [ "$JG_WATCHER_MATCHED_IDENTITY" = "$cycle_watcher_identity" ]
 }
 
-# Stay alive across identity-matched healthy holders. If one cycle ends, attach
-# to a verified successor. With no successor, report the wake that cycle durably
+# Stay alive across identity-matched healthy holders. If one cycle ends, follow
+# the successor that claims the lock within the hand-off window
+# (await_successor_claim). With none, report the wake that cycle durably
 # delivered, or fail loudly - never a clean empty completion that an adapter could
 # mistake for a no-op.
 # A stale beacon alone does not end the followed cycle: while the holder is alive
@@ -444,7 +488,7 @@ attach_and_wait() {
       echo "watcher: FAILED - attached watcher pid=$attached_pid stalled (beacon ${age}s at or past hard bound ${STALL_BOUND}s)"
       return 1
     fi
-    if wait_for_healthy_successor "$attached_pid"; then
+    if await_successor_claim; then
       cycle_log_append unknown unknown attached-cycle-ended "attached:$HEALTHY_PID"
       attached_pid=$HEALTHY_PID
       cycle_begin "$attached_pid" attached "$HEALTHY_IDENTITY"
@@ -464,13 +508,29 @@ attach_and_wait() {
 handle_attached_signal() {
   local signal=$1 rc=$2
   trap - HUP TERM INT
+  trap '' USR1
   cycle_log_append "$rc" "$signal" arm-interrupted none
   exit "$rc"
+}
+
+# SIGUSR1 is a take-over's request for this arm's cycle (header, --take-over):
+# record the hand-over and leave, never signalling the watcher, which the
+# requesting arm goes on following. A started arm also drops its own capture
+# file and its claim on the child, so nothing it runs on exit stops the watcher.
+# shellcheck disable=SC2329 # Invoked indirectly by the signal traps below.
+hand_cycle_over() {
+  trap '' HUP TERM INT USR1
+  cycle_log_append unknown USR1 handed-over none
+  [ -z "${child_out:-}" ] || rm -f "$child_out" 2>/dev/null || true
+  child=
+  child_out=
+  exit 0
 }
 
 trap 'handle_attached_signal HUP 129' HUP
 trap 'handle_attached_signal TERM 143' TERM
 trap 'handle_attached_signal INT 130' INT
+trap hand_cycle_over USR1
 
 watch_output_has_wake() {
   local out=$1
@@ -604,65 +664,41 @@ if [ "$mode" = stop ]; then
   exit 0
 fi
 
-# Stop the watcher the named arm owns, by its locked identity, and wait for it
-# to exit (header, --take-over). Returns 3 after printing the reason that cycle
-# delivered before the stop landed, 0 once it stopped without delivering, and
-# 1 when it was not stopped (its handover state was unreadable, or it outlived
-# the stop), which leaves it to the plain attach below.
-take_over_cycle() {  # <watcher-pid> <identity>
-  local pid=$1 i owner_signal
-  cycle_begin "$pid" attached "$2"
-  jg_recovery_marker_handover_snapshot "$STATE/.watcher-down" || return 1
-  if attached_holder_live "$pid"; then
-    kill -TERM "$pid" 2>/dev/null || true
-  fi
+# Ask the live arm <arm-pid> of this home to hand its cycle over (header,
+# --take-over) and wait for it to exit. Its state/.watch-arms record must name
+# its current identity, so a recycled pid or another home's arm is never
+# signalled. Returns 0 once it exited, 1 when it is not this home's arm or it
+# outlived the request.
+hand_over_cycle() {  # <arm-pid>
+  local arm=$1 recorded_pid recorded_identity i
+  [ "$arm" != "$ARM_PID" ] || return 1
+  IFS=$'\t' read -r recorded_pid recorded_identity _ 2>/dev/null < "$STATE/.watch-arms/$arm" || return 1
+  [ "$recorded_pid" = "$arm" ] && [ -n "$recorded_identity" ] || return 1
+  [ "$(jg_pid_identity "$arm" 2>/dev/null)" = "$recorded_identity" ] || return 1
+  kill -USR1 "$arm" 2>/dev/null || return 1
   i=0
-  while [ "$i" -lt 50 ] && jg_pid_alive "$pid"; do
+  while [ "$i" -lt 50 ] && jg_pid_alive "$arm"; do
     sleep 0.1
     i=$((i + 1))
   done
-  if jg_pid_alive "$pid"; then
-    return 1
-  fi
-  if cycle_delivered_reason; then
-    cycle_log_append unknown unknown taken-over-delivered-wake none
-    printf '%s\n' "$DELIVERED_REASON"
-    return 3
-  fi
-  # Only the owner can wait on this watcher and distinguish our TERM from a
-  # self-exit that raced the stop. Give its post-wait ledger append a short bound.
-  i=0
-  owner_signal=
-  while [ "$i" -lt 50 ]; do
-    owner_signal=$(awk -F '\t' -v arm="$take_over_arm_pid" -v watcher="$pid" '
-      $1 == "arm_pid=" arm && $2 == "watcher_pid=" watcher { signal = $7 }
-      END { sub(/^signal=/, "", signal); print signal }
-    ' "$CYCLE_LOG" 2>/dev/null || true)
-    [ -z "$owner_signal" ] || break
-    sleep 0.02
-    i=$((i + 1))
-  done
-  if [ "$owner_signal" = TERM ]; then
-    jg_recovery_marker_handover_restore "$STATE/.watcher-down" \
-      "$JG_RECOVERY_HANDOVER_TOKEN" "$JG_RECOVERY_HANDOVER_SEQ" || true
-    cycle_log_append unknown unknown taken-over none
-  else
-    cycle_log_append unknown unknown taken-over-unconfirmed-stop none
-  fi
-  return 0
+  ! jg_pid_alive "$arm"
 }
 
 TAKEN_OVER=0
 if [ "$mode" = take-over ]; then
   mode=arm
-  if healthy_watcher \
-    && [ "$(ps -o ppid= -p "$HEALTHY_PID" 2>/dev/null | tr -d ' ')" = "$take_over_arm_pid" ]; then
-    take_over_cycle "$HEALTHY_PID" "$HEALTHY_IDENTITY"
-    case $? in
-      0) TAKEN_OVER=1 ;;
-      3) exit 0 ;;
-    esac
+  # The watcher before the hand-over, so a reason it delivered meanwhile is
+  # still reported once (an attached arm's close, attach_and_wait).
+  ! healthy_watcher || cycle_begin "$HEALTHY_PID" attached "$HEALTHY_IDENTITY"
+  if hand_over_cycle "$take_over_arm_pid"; then
+    TAKEN_OVER=1
+    if [ "$cycle_active" -eq 1 ] && ! attached_holder_live "$cycle_watcher_pid" && cycle_delivered_reason; then
+      cycle_log_append unknown unknown taken-over-delivered-wake none
+      printf '%s\n' "$DELIVERED_REASON"
+      exit 0
+    fi
   fi
+  cycle_active=0
 fi
 
 # Crash backoff. Whichever owner retries a failed cycle (the Claude Stop hook,
@@ -711,8 +747,10 @@ crash_backoff_wait
 # this home's watcher and wants a fresh one.)
 if [ "$mode" = arm ] && healthy_watcher; then
   cycle_mark_predecessor_successor "attached:$HEALTHY_PID"
-  cycle_begin "$HEALTHY_PID" attached "$HEALTHY_IDENTITY"
+  [ "$TAKEN_OVER" -eq 0 ] || cycle_mark_predecessor_successor "attached:$HEALTHY_PID" "$take_over_arm_pid"
   report_attached
+  [ "$NO_FOLLOW" != 1 ] || exit 0
+  cycle_begin "$HEALTHY_PID" attached "$HEALTHY_IDENTITY"
   attach_and_wait "$HEALTHY_PID"
   exit $?
 fi
@@ -736,6 +774,7 @@ cleanup_child() {
 handle_arm_signal() {
   local signal=$1 rc=$2
   trap - HUP TERM INT
+  trap '' USR1
   if [ -n "$child" ] && jg_pid_alive "$child"; then
     # The watcher installs its own cleanup traps only after acquiring and
     # publishing the home-bound lock identity. Do not TERM it in the middle of
@@ -813,6 +852,7 @@ owned_child_finished() {
       child_out=
       cycle_mark_predecessor_successor "attached:$HEALTHY_PID"
       report_attached
+      [ "$NO_FOLLOW" != 1 ] || return 0
       cycle_begin "$HEALTHY_PID" attached "$HEALTHY_IDENTITY"
       attach_and_wait "$HEALTHY_PID"
       return $?
@@ -870,7 +910,7 @@ while :; do
         exit 1
       fi
       cycle_mark_predecessor_successor "started:$child"
-      [ "$TAKEN_OVER" -eq 0 ] || cycle_mark_predecessor_successor "started:$child" "$ARM_PID"
+      [ "$TAKEN_OVER" -eq 0 ] || cycle_mark_predecessor_successor "started:$child" "$take_over_arm_pid"
       if [ -n "$handling_generation" ]; then
         echo "watcher: started pid=$child (beacon fresh) recovery-generation=$handling_generation"
       else
@@ -899,6 +939,7 @@ while :; do
 done
 
 trap - HUP TERM INT
+trap '' USR1
 print_watch_output "$child_out"
 cleanup_child
 wait "$child" 2>/dev/null

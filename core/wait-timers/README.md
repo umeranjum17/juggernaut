@@ -108,6 +108,7 @@ What this library still does for a wait:
 | secrets-path prompt (`.env`, `~/.config`, a home's `data/` or `config/`) | at once | the watcher rejects it and tells the worker why |
 | any other prompt, question, decision, or blocker | first sight, then `JG_WAIT_ALERT_SECS` | the owning home is woken (the escalation workflow) |
 
+- A worker's own open question (`jg ask`, not the captain's and not a validation finding) is answered before any rung by `core/decision-handler`: one plan-only advisor call, one steer that closes it, and a boundary question stays on this ladder.
 - A stuck state with a row in the owner table gets its owner's steps from the
   library before the owner wake (see "Known next steps").
 - A lead's own supervision not running is a Main wait from lead liveness, so a

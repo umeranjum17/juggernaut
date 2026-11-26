@@ -1,0 +1,24 @@
+# Independent cases for the action inventory (critic round 2, gap 2): written by hand from reading each script at
+# 1b483363a (header usage, dispatch case and what the action writes), not from the extractor.
+# script	action	class	effect
+jg-war-room.sh	start	public	change
+jg-war-room.sh	next	public	change
+jg-war-room.sh	approve	public	change
+jg-swarm.sh	start	public	change
+jg-control.sh	interrupt	public	change
+jg-control.sh	exit	public	change
+jg-control.sh	relaunch	public	change
+jg-control.sh	primary relaunch	public	change
+jg-check-register.sh	-	public	change
+jg-teardown.sh	-	public	change
+jg-send.sh	-	public	change
+jg-peek.sh	-	public	read
+jg-crew-state.sh	-	public	read
+jg-question-card.sh	post	public	change
+jg-alert.sh	row	public	read
+jg-alert.sh	raise	public	change
+jg-captain-hold.sh	hold	public	change
+jg-captain-hold.sh	answer	public	change
+jg-captain-hold.sh	answers	public	change
+jg-captain-hold.sh	open	public	read
+jg-wake-drain.sh	-	public	change

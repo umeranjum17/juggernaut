@@ -324,6 +324,9 @@ W8=$T/w8
 mkworld "$W8"; strict "$W8"; mkplan "$W8/in"
 M=$W8/main L=$W8/lead
 : > "$T/send.log"; : > "$T/card.log"; rm -f "$T/card.base"
+printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$M" > "$L/.jg-squad-lead-parent"
+printf 'fixture-session\n' > "$M/state/.lock-session"
+at "$M" "$ROOT/bin/jg-inbox.sh" primary-chat fixture-session 1 "Run the swarm." >/dev/null || fail "the owner order was not recorded"
 at "$M" "$ROOT/bin/jg-backlog.sh" add jg-ask "[captain-ask] Run the swarm" --kind ship --repo proj --priority 0 \
   --body "$(printf '## Captain\nx\n\n## Ask\nx\n\n## Why\nx\n\n## Done when\nx\n\n## Acceptance Criteria\nx\n')" >/dev/null || fail "the [captain-ask] row was not filed"
 out=$(start "$M" "$W8/in/plan.json" --order jg-ask) || fail "start with --order: $out"

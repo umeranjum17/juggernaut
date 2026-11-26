@@ -6,7 +6,7 @@
 #   jg-alert.sh limit <kind>                print the slow-delivery limit in seconds for a kind of work (0 = none)
 #   jg-alert.sh timers                      print the wait ladder's timers, one "<name> <seconds>" line each: escalate (the stuck-wait
 #                                           precedence's seconds to the next rung), card (two such steps), realert (its repeat), ready-stall
-#   jg-alert.sh raise <alert> <subject> [--mode <delivery word>] [--kind <kind>] [--held <seconds>] [--fact k=v | word]...
+#   jg-alert.sh raise <alert> <subject> [--mode <delivery word>] [--kind <kind>] [--held <seconds>] [--fact <fact>]...
 #                     [--home H] [--project P] [--route R] [--machine M] [--ticket T] [--rung N] [--wake <kind> --text <line>] [--repeat]
 #                     [--note <text>] [--deliver | --print]
 #                     [--owner-gate G --ticket T --origin O | --security-source S]

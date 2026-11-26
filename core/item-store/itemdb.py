@@ -106,27 +106,30 @@ def add_missing_views(con, shipped):
             con.execute(sql)
 
 
-# Triggers a reviewed schema.sql or tickets.sql edit replaced: name -> sha256 of the superseded sqlite_master text. A live store whose
-# trigger still has exactly that text is moved to the shipped one; any other text stays, so the schema audit still finds a changed trigger.
+# Triggers and views a reviewed schema.sql or tickets.sql edit replaced: name -> sha256 of the superseded sqlite_master text. A live store
+# whose object still has exactly that text is moved to the shipped one; any other text stays, so the schema audit still finds a changed one.
 SUPERSEDED_TRIGGERS = {"policy_check": "cb699fdb1102fb2e990c72abb7d102ba423c9d934ac39131f3d432c58260f9ac",          # jg-6sa2s: fill-missing
                        "ticket_change_kept": "d5053682fb14d35a1b4b7d3196ffd5feecd8cb40c2ce929b22d88f6181acb4d2"}    # jg-ih7: compact() erases a superseded change
+SUPERSEDED_VIEWS = {"alert_kind": "e3af46904cc09ea5382dae6fbb8b7a87f25009a60e10e2602ebf883feb052319",              # jg-279: the done-unhandled alert row
+                    "alert_text": "f8ec03c520582e0b470bc55d790e9c898211510b2d05721e14749d1fd84bb7c0"}
 
 
-def reload_superseded_triggers(con, shipped):
-    """shipped: trigger name -> its sqlite_master text as schema.sql and tickets.sql build it. Replaced under the write lock, in one transaction."""
+def reload_superseded(con, shipped):
+    """shipped: object name -> its sqlite_master text as schema.sql and tickets.sql build it. Replaced under the write lock, in one transaction."""
     def stale():
         out = []
-        for name, old in SUPERSEDED_TRIGGERS.items():
-            live = con.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (name,)).fetchone()
-            if live and shipped.get(name) and live[0] != shipped[name] and hashlib.sha256(live[0].encode()).hexdigest() == old:
-                out.append(name)
+        for kind, superseded in (("trigger", SUPERSEDED_TRIGGERS), ("view", SUPERSEDED_VIEWS)):
+            for name, old in superseded.items():
+                live = con.execute("SELECT sql FROM sqlite_master WHERE type=? AND name=?", (kind, name)).fetchone()
+                if live and shipped.get(name) and live[0] != shipped[name] and hashlib.sha256(live[0].encode()).hexdigest() == old:
+                    out.append((kind, name))
         return out
     if not stale():
         return
     S.begin_write(con)
     try:
-        for name in stale():               # read again under the lock: another writer may have moved it first
-            con.execute("DROP TRIGGER " + name)
+        for kind, name in stale():         # read again under the lock: another writer may have moved it first
+            con.execute("DROP %s %s" % (kind.upper(), name))
             con.execute(shipped[name])
         con.execute("COMMIT")
     except Exception:
@@ -146,8 +149,8 @@ def open_db(home, by):
     fresh = S.Store(":memory:")
     if attach:
         add_missing_views(st.con, fresh.con)
-        shipped = dict(fresh.con.execute("SELECT name, sql FROM sqlite_master WHERE type='trigger'").fetchall())
-        reload_superseded_triggers(st.con, dict(shipped, **st._ticket_objects()))
+        shipped = dict(fresh.con.execute("SELECT name, sql FROM sqlite_master WHERE type IN ('trigger', 'view')").fetchall())
+        reload_superseded(st.con, dict(shipped, **st._ticket_objects()))
     st.shipped = fresh.schema_hash()                     # the rules as shipped in schema.sql, for the audit
     st.boot = boot_id()
     return st

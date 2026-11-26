@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # auto-dispatch watcher check: every beat, write down which tickets this home would start by itself, and, with the home's
 # switch on, start them. With the switch off (the default) it is watch only: it starts nothing.
+# Under the check lock, each pass first gives workflow advance up to 20 seconds to publish approvals for newly ready steps.
+# Advance is silent here and the dispatch scan proceeds even if advance fails or times out.
 # Usage: dispatch.sh check <jg-home>
 #        dispatch.sh pass <jg-home>              one pass of the check, with no lock (the check's own step)
 #        dispatch.sh state <jg-home> <id>        print the start state of an approved ticket (the machine's observer)
@@ -11,15 +13,15 @@
 # ticket that holds an approval record. A candidate is judged in this order, and the first reason that fits is the one written:
 #   1. no approval record  state/dispatch-approved/<id>, written by `bin/jg-backlog.sh approve-dispatch` (a worker is refused
 #      there); a line typed into a ticket body is never read, so it cannot approve anything;
-#   2. a captain decision is open and linked to it (`bin/jg-captain-hold.sh blocking`; an answer that cannot be established also stops it);
+#   2. a captain decision is open and linked to it (one `bin/jg-captain-hold.sh blocking --batch` read per pass; an unread batch stops it);
 #   3. it is not in the spawnable list (held, taken by a lane, closed, or its project is not this home's);
 #   4. no brief  data/<id>/brief.md is missing or empty;
 #   5. the approval record has no route (harness, model, effort);
 #   6. no free lane is left for it;
-#   7. no free copy: with the switch on, core/pool-reserve/reserve.sh `admit` refuses a copy of its project (the lane limit and the
-#      two copies kept for a red fix). That is a wait, not a failure: the row says so, nothing is spawned, and a later beat starts it.
-# A ticket that passes all six is a "would start" row, in list order, as many as there are free lanes. The check writes no
-# brief and picks no route.
+#   7. no free copy: with the switch on, core/pool-reserve/reserve.sh `admit` checks each eligible project once per pass (the lane
+#      limit and two copies kept for a red fix). If it refuses, the project waits for a later beat.
+# A ticket that passes all six is a "would start" row, in list order, as many as there are free lanes.
+# With the switch on, jg-worker-start prepares eligible self-filed repairs before these checks.
 # The switch is config/auto-dispatch: its first word `on` makes the check act, anything else or no file leaves it watch only.
 # Switch on, each "would start" ticket is spawned through bin/jg-spawn.sh with the route of its approval record, as a ship
 # lane in the delivery mode of its brief's `Delivery contract: mode=` line and the project's registered yolo posture, on the
@@ -43,7 +45,8 @@
 # The lane target, the quota gates and the brief gates stay: the spawn applies its own and may refuse.
 # The check runs one pass at a time per home: it holds the lock directory data/auto-dispatch/.check.lock (the holder's pid in it;
 # a dead holder's lock is taken over). A call that finds a pass running leaves the mark data/auto-dispatch/.check.again FIRST,
-# tries the lock once more, and else exits 0 printing nothing; the holder releases the lock after each pass, and when the mark is
+# tries the lock once more, and else exits 0 printing nothing. A periodic check skips while a pass is in flight, since that
+# pass is already performing the scheduled scan. The holder releases the lock after each pass, and when the mark is
 # there takes the lock again, removes the mark and makes one more pass (at most 3 passes in one call; a mark left after the
 # third starts one detached check, so it is never left for the next beat). So any number of events may start the check at once.
 # A detached check (a retry, or that last one) prints nothing, so it names no ticket to the lead and raises no alert: the next
@@ -57,7 +60,7 @@
 # Every pass also appends one line to data/auto-dispatch/passes.tsv (the last 5000 lines are kept), whatever its verdicts were:
 #   <epoch><TAB>pass<TAB><candidates><TAB><started><TAB><deferred><TAB><seconds><TAB><switch on|off>
 # candidates are the tickets the pass judged, started the ones it launched, deferred the ones the spawn told to wait; a pass that
-# could not read the store writes no line. The watcher starts the check every minute (bin/jg-watch.sh, JG_DISPATCH_INTERVAL).
+# could not read the store writes no line. The watcher schedules starts in bin/jg-watch.sh.
 # Switch on, a ticket that passed all six reasons and still has no running start 10 minutes after its refusal (a brief with no
 # delivery contract, an unreadable yolo posture, a failed start) raises the `ready-idle` alert through bin/jg-alert.sh, the
 # alert table's own timer and rung, printed as the check's wake line; a start that takes resolves it. Watch only raises nothing.
@@ -95,6 +98,8 @@ RETRY_DELAY=${JG_DISPATCH_RETRY_DELAY:-20}
 MAX_PASSES=3
 LOCK_HELD=0
 QUIET=${JG_DISPATCH_DETACHED:-}   # set by detach: this check has no reader, so it keeps the lead's note and the alert for a beat
+PERIODIC=${JG_DISPATCH_PERIODIC:-0}
+unset JG_DISPATCH_PERIODIC       # The periodic caller's policy applies only to this attempt, never its deferred retries.
 case "$RETRY_DELAY" in ''|*[!0-9]*) RETRY_DELAY=20 ;; esac
 umask 077
 mkdir -p "$DATA/auto-dispatch" || exit 0
@@ -125,27 +130,39 @@ free_lanes() {
 # approved_field <id> <field>: the field's value in the id's approval record.
 approved_field() { sed -n "s/^$2=//p" "$APPROVED/$1" 2>/dev/null | tail -n 1; }
 
-# verdict <id>: prints "route<TAB>..." when the ticket passes reasons 1 to 5, else "why<TAB>...".
+# verdict <id>: sets VERDICT to "route<TAB>..." when the ticket passes reasons 1 to 5, else "why<TAB>...".
+VERDICT=
 verdict() {
-  local id=$1 rc route
-  [ -f "$APPROVED/$id" ] || { printf 'why\tno approval record\n'; return; }
-  "$HOLD" blocking "$id" >/dev/null 2>&1; rc=$?
-  case "$rc" in
-    0) printf 'why\tan open decision is linked to it\n'; return ;;
-    1) ;;
-    *) printf 'why\tits open decisions could not be read\n'; return ;;
-  esac
-  grep -qx -- "$id" "$SPAWNABLE_IDS" || { printf 'why\tnot spawnable now (held, taken, closed, or not this home'"'"'s project)\n'; return; }
-  [ -s "$DATA/$id/brief.md" ] || { printf 'why\tno brief\n'; return; }
-  route="$(approved_field "$id" harness) $(approved_field "$id" model) $(approved_field "$id" effort)"
-  case "$route" in ' '*|*'  '*|*' ') printf 'why\tthe approval record has no route\n'; return ;; esac
-  printf 'route\t%s\n' "$route"
+  local id=$1 route error
+  if [ -z "${APPROVED_EXISTS[$id]+x}" ]; then VERDICT=$'why\t'"${REPAIR_REFUSAL[$id]:-no approval record}"; return; fi
+  if [ "$decisions_read" -eq 0 ]; then VERDICT=$'why\tits open decisions could not be read'; return; fi
+  if [ -n "${BLOCKED_SET[$id]+x}" ]; then VERDICT=$'why\tan open decision is linked to it'; return; fi
+  if [ -z "${SPAWNABLE_PROJECT[$id]+x}" ]; then
+    VERDICT="why"$'\t'"not spawnable now (held, taken, closed, or not this home's project)"; return
+  fi
+  [ -s "$DATA/$id/brief.md" ] || { VERDICT=$'why\tno brief'; return; }
+  if [ -n "${CAPTAIN_ROUTE[$id]+x}" ] && ! error=$("$BACKLOG" check-route "$id" 2>&1); then
+    VERDICT=$'why\t'${error//$'\n'/ }; return
+  fi
+  route="${APPROVED_HARNESS[$id]:-} ${APPROVED_MODEL[$id]:-} ${APPROVED_EFFORT[$id]:-}"
+  case "$route" in ' '*|*'  '*|*' ') VERDICT=$'why\tthe approval record has no route'; return ;; esac
+  VERDICT="route"$'\t'"$route"
 }
 
-# last_row <id>: the "<epoch><TAB><kind><TAB><detail>" of the id's newest row.
-last_row() { awk -F'\t' -v id="$1" '$2 == id { r = $1 "\t" $3 "\t" $4 } END { if (r != "") print r }' "$ROWS" 2>/dev/null; }
-# last_verdict <id>: the "<kind><TAB><detail>" of that row.
-last_verdict() { last_row "$1" | cut -f2-; }
+# Cache the dispatch preflight result for this pass. The spawn checks capacity again before leasing a copy.
+pool_has_copy() {
+  local project=$1 admit_err
+  if [ -z "${POOL_WAIT_REASON[$project]+x}" ]; then
+    POOL_WAIT_REASON[$project]=
+    if [ -x "$RESERVE" ] && ! admit_err=$("$RESERVE" admit "$FMH" "$FMH/projects/$project" 2>&1 >/dev/null); then
+      case "$admit_err" in
+        *"cannot be counted"*) POOL_WAIT_REASON[$project]="copy count unknown (the pool could not be read; the next beat retries)" ;;
+        *) POOL_WAIT_REASON[$project]="no free copy (the copies left are kept for a red fix)" ;;
+      esac
+    fi
+  fi
+  [ -z "${POOL_WAIT_REASON[$project]}" ]
+}
 
 # switch_on: the first word of config/auto-dispatch is `on`.
 switch_on() { [ "$(awk 'NF { print $1; exit }' "$CONFIG/auto-dispatch" 2>/dev/null)" = on ]; }
@@ -176,25 +193,41 @@ lane_record() { [ -f "$STATE/$1.meta" ] && ! grep -q '^cleanup_recovery=' "$STAT
 
 # start_state <id>: sets START_STATE (ready, starting, started, deferred or refused) and START_WHY (the cause of a deferral
 # or a refusal). Needs $now.
+declare -A APPROVED_AT=()
 START_STATE=ready; START_WHY=
 start_state() {
-  local id=$1 rec result task launched approved current
+  local id=$1 f n best=0 rec result='' task='' launched='' approved='' reason='' current='' line
   START_STATE=ready; START_WHY=
-  rec=$START_PREFIX/$id.start.$(latest_attempt "$id")
+  for f in "$START_PREFIX/$id".start.*; do
+    [ -f "$f" ] || continue
+    n=${f##*.start.}
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    [ "$n" -le "$best" ] || best=$n
+  done
+  [ "$best" -gt 0 ] || return 0
+  rec=$START_PREFIX/$id.start.$best
   [ -f "$rec" ] || return 0
-  task=$(start_field "$rec" task); result=$(start_field "$rec" result)
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      task=*) task=${line#task=} ;;
+      result=*) result=${line#result=} ;;
+      launched-at=*) launched=${line#launched-at=} ;;
+      approved-at=*) approved=${line#approved-at=} ;;
+      reason=*) reason=${line#reason=} ;;
+    esac
+  done < "$rec"
   if [ -z "$result" ]; then
     # No result yet: the wrapper is still running the spawn, or it died. The lane record settles a dead wrapper.
-    launched=$(start_field "$rec" launched-at)
     if [ $((now - ${launched:-0})) -lt "$IN_FLIGHT_SECONDS" ]; then START_STATE=starting
     elif lane_record "$task"; then START_STATE=started
     else START_STATE=refused; START_WHY="the start left no result in $IN_FLIGHT_SECONDS seconds (see data/auto-dispatch/$id.log)"; fi
     return 0
   fi
   # A result belongs to the approval it was started under; a newer approval starts over.
-  approved=$(start_field "$rec" approved-at); current=$(approved_field "$id" approved-at)
+  if [ -n "${APPROVED_AT[$id]+x}" ]; then current=${APPROVED_AT[$id]}
+  else current=$(approved_field "$id" approved-at); fi
   if [ "${current:-0}" -gt "${approved:-0}" ] 2>/dev/null; then return 0; fi
-  START_STATE=$result; START_WHY=$(start_field "$rec" reason)
+  START_STATE=$result; START_WHY=$reason
 }
 
 # last_line <log>: the last line of the spawn's output as one short line with no tab.
@@ -286,7 +319,7 @@ launch() {
 # needs_lead <kind> <detail>: a row whose cause only the lead can clear.
 needs_lead() {
   [ "$1" != "spawn failed" ] || return 0
-  case "$2" in "no approval record"|"no brief"|"the approval record has no route"|"the brief has no delivery contract line") return 0 ;; esac
+  case "$2" in "no approval record"*|"no brief"|"the approval record has no route"|"the brief has no delivery contract line"|*"Main must "*) return 0 ;; esac
   return 1
 }
 
@@ -332,12 +365,16 @@ release_lock() {
 check_call() {
   local passes=0
   if ! take_lock; then
+    [ "$PERIODIC" != 1 ] || return 0
     : > "$CHECK_AGAIN"
     take_lock || return 0
   fi
   trap release_lock EXIT
   while :; do
     rm -f -- "$CHECK_AGAIN"
+    if [ -f "$FMH/bin/jg-workflow.sh" ]; then
+      JG_WORKFLOW_WAIT_FOR_STARTS=1 timeout 20 "$FMH/bin/jg-workflow.sh" advance "$FMH" >/dev/null 2>&1 || true
+    fi
     bash "$SELF" pass "$FMH"
     passes=$((passes + 1))
     release_lock hook
@@ -357,50 +394,114 @@ esac
 tmp=$(mktemp -d) || exit 0
 trap 'rm -rf -- "$tmp"' EXIT
 SPAWNABLE_IDS=$tmp/spawnable
-"$BACKLOG" ready --spawnable > "$tmp/out" 2>/dev/null || exit 0   # the store could not answer: write nothing this beat
-awk -F'\t' 'NF >= 2 { print $1 }' "$tmp/out" > "$SPAWNABLE_IDS"
-for f in "$APPROVED"/*; do [ -f "$f" ] && basename "$f"; done 2>/dev/null | sort -u > "$tmp/approved"
+"$BACKLOG" ready --spawnable --with-filer > "$tmp/out" 2>/dev/null || exit 0   # the store could not answer: write nothing this beat
+ACT=0; ! switch_on || ACT=1
+REPAIR_START=$FMH/bin/jg-worker-start.sh
+if [ -x "$REPAIR_START" ]; then
+  # shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
+  . "$FMH/bin/jg-captain-ask-lib.sh"
+fi
+declare -A REPAIR_REFUSAL=()
+declare -A SPAWNABLE_PROJECT=() APPROVED_EXISTS=() APPROVED_AT=() APPROVED_HARNESS=() APPROVED_MODEL=() APPROVED_EFFORT=() CAPTAIN_ROUTE=()
+: > "$SPAWNABLE_IDS"
+while IFS=$'\t' read -r sid sproj filer; do
+  [ -n "$sid" ] && [ -n "$sproj" ] || continue
+  printf '%s\n' "$sid" >> "$SPAWNABLE_IDS"
+  [ -n "${SPAWNABLE_PROJECT[$sid]+x}" ] || SPAWNABLE_PROJECT[$sid]=$sproj
+  if [ "$ACT" -eq 1 ] && [ ! -f "$APPROVED/$sid" ] && [ -x "$REPAIR_START" ] && captain_ask_repair_filer "$filer"; then
+    detail=$("$REPAIR_START" --repair "$sid" "$sproj" 2>&1) || {
+      [ "$?" -eq 75 ] || REPAIR_REFUSAL[$sid]="no approval record: $(printf '%s\n' "$detail" | tail -n 1)"
+    }
+  fi
+done < "$tmp/out"
+: > "$tmp/approved-raw"; : > "$tmp/approved-pairs"
+for f in "$APPROVED"/*; do
+  [ -f "$f" ] || continue
+  id=${f##*/}
+  APPROVED_EXISTS[$id]=1
+  printf '%s\n' "$id" >> "$tmp/approved-raw"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      approved-at=*) APPROVED_AT[$id]=${line#approved-at=} ;;
+      harness=*)     APPROVED_HARNESS[$id]=${line#harness=} ;;
+      model=*)       APPROVED_MODEL[$id]=${line#model=} ;;
+      effort=*)      APPROVED_EFFORT[$id]=${line#effort=} ;;
+      captain-route=yes) CAPTAIN_ROUTE[$id]=1 ;;
+    esac
+  done < "$f"
+  printf '%s\t%s\n' "$id" "${APPROVED_AT[$id]:-}" >> "$tmp/approved-pairs"
+done
+sort -u "$tmp/approved-raw" > "$tmp/approved"
 # The item store (core/item-store) is also told of each approval record: one dispatch item held by the lead until a spawn closes it.
 # Guarded by the home's own switch, silent, and never a reason to change this check's output or exit; today's record decides.
-if [ -e "$FMH/config/item-store" ]; then
+if [ -e "$FMH/config/item-store" ] && [ -s "$tmp/approved-pairs" ]; then
   ROOT=$(cd "$(dirname "$SELF")/../.." && pwd -P)
-  HID=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import itemdb; print(itemdb.home_id(sys.argv[2]))' "$ROOT/core/item-store" "$FMH" 2>/dev/null) || HID=
-  while [ -n "$HID" ] && IFS= read -r id; do
-    [ -n "$id" ] || continue
-    python3 -I "$ROOT/core/item-store/adapters/dispatch.py" approve "$HID" "$id" \
-      --source "approval:$id@$(approved_field "$id" approved-at)" >/dev/null 2>&1 || true
-  done < "$tmp/approved"
+  adapter=$ROOT/core/item-store/adapters/dispatch.py
+  [ -f "$adapter" ] || adapter=$FMH/core/item-store/adapters/dispatch.py
+  [ ! -f "$adapter" ] || python3 -I "$adapter" approve-batch < "$tmp/approved-pairs" >/dev/null 2>&1 || true
+fi
+
+# One decision read for all approved candidates. Only a successful batch with the expected header can clear a candidate.
+decisions_read=0
+declare -A BLOCKED_SET=()
+if [ -s "$tmp/approved" ] && "$HOLD" blocking --batch < "$tmp/approved" > "$tmp/block-out" 2>/dev/null; then
+  {
+    if IFS= read -r header && [ "$header" = "blocking-batch: ok" ]; then
+      decisions_read=1
+      while IFS=$'\t' read -r bid _rest; do
+        [ -n "$bid" ] && BLOCKED_SET[$bid]=1
+      done
+    fi
+  } < "$tmp/block-out"
 fi
 
 [ ! -x "$SCALE" ] || "$SCALE" check "$FMH" >/dev/null 2>&1   # the lane limit takes its tick on this beat
 free=$(free_lanes)
 now=$(date +%s)
 started=0; launched=0; deferred=0
-ACT=0; ! switch_on || ACT=1
 : > "$tmp/lead"; : > "$tmp/alerts"
 # List order is the store's priority order and is kept as it is (no sort); approved tickets the list lacks come last, and they never start.
 awk '!seen[$0]++' "$SPAWNABLE_IDS" "$tmp/approved" > "$tmp/ordered"
+declare -A LAST_EPOCH=() LAST_VERDICT=() POOL_WAIT_REASON=()
+if [ -s "$ROWS" ]; then
+  while IFS=$'\t' read -r r_epoch r_id r_kind r_detail; do
+    [ -n "$r_id" ] || continue
+    LAST_EPOCH[$r_id]=$r_epoch
+    LAST_VERDICT[$r_id]=$r_kind$'\t'$r_detail
+  done < <(awk -F'\t' 'NF >= 4 { e[$2] = $1; k[$2] = $3; d[$2] = $4 } END { for (id in e) printf "%s\t%s\t%s\t%s\n", e[id], id, k[id], d[id] }' "$ROWS" 2>/dev/null)
+fi
 # record_row <id> <idle 0|1> <kind> <detail>: write the ticket's row when its verdict changed, and do what the row asks: a row the
 # check may not leave raises ready-idle, a started row clears the alert and the lead's note, a row the lead must clear is named once.
 record_row() {
-  local id=$1 idle=$2 row=$3$'\t'$4 since
-  since=$now; [ "$(last_verdict "$id")" != "$row" ] || since=$prev_epoch
-  [ "$(last_verdict "$id")" = "$row" ] || printf '%s\t%s\t%s\n' "$now" "$id" "$row" >> "$ROWS"
+  local id=$1 idle=$2 row=$3$'\t'$4 since prev_v=${LAST_VERDICT[$1]:-}
+  since=$now; [ "$prev_v" != "$row" ] || since=${LAST_EPOCH[$id]:-$now}
+  if [ "$prev_v" != "$row" ]; then
+    printf '%s\t%s\t%s\n' "$now" "$id" "$row" >> "$ROWS"
+    LAST_EPOCH[$id]=$now
+    LAST_VERDICT[$id]=$row
+  fi
   if [ "$ACT" -eq 1 ] && [ "$idle" -eq 1 ] && [ -z "$QUIET" ]; then ready_idle "$id" "$since"; fi
-  case "$row" in started$'\t'*) JG_STATE_OVERRIDE=$STATE "$ALERT" resolve "ready-idle--$id" --proof source:row-started >/dev/null 2>&1 ;; esac
-  case "$row" in started$'\t'*) grep -v -F -- "$id"$'\t' "$TOLD" > "$tmp/told" 2>/dev/null; cat "$tmp/told" > "$TOLD" 2>/dev/null ;; esac
+  case "$row" in
+    started$'\t'*)
+      if [ "$prev_v" != "$row" ] || [ -f "$STATE/alerts/ready-idle--$id.rec" ]; then
+        JG_STATE_OVERRIDE=$STATE "$ALERT" resolve "ready-idle--$id" --proof source:row-started >/dev/null 2>&1
+      fi
+      if [ -s "$TOLD" ] && grep -q -F -- "$id"$'\t' "$TOLD" 2>/dev/null; then
+        grep -v -F -- "$id"$'\t' "$TOLD" > "$tmp/told" 2>/dev/null; cat "$tmp/told" > "$TOLD" 2>/dev/null
+      fi ;;
+  esac
   if [ "$ACT" -eq 1 ] && [ -z "$QUIET" ] && needs_lead "${row%%$'\t'*}" "${row#*$'\t'}" && ! grep -qxF -- "$id"$'\t'"$row" "$TOLD" 2>/dev/null; then
     printf '%s\t%s\n' "$id" "$row" >> "$TOLD"; printf '%s (%s)\n' "$id" "${row#*$'\t'}" >> "$tmp/lead"
   fi
 }
 
 # route_of <id>: the route of the id's approval record.
-route_of() { printf '%s %s %s' "$(approved_field "$1" harness)" "$(approved_field "$1" model)" "$(approved_field "$1" effort)"; }
+route_of() { printf '%s %s %s' "${APPROVED_HARNESS[$1]:-}" "${APPROVED_MODEL[$1]:-}" "${APPROVED_EFFORT[$1]:-}"; }
 
 while IFS= read -r id; do
   [ -n "$id" ] || continue
-  prev=$(last_row "$id"); prev_epoch=${prev%%$'\t'*}
-  v=$(verdict "$id")
+  verdict "$id"
+  v=$VERDICT
   task=${id//./-}
   if [ "$ACT" -eq 1 ]; then
     # The start's own record says how the last start ended, and the lane record says whether the ticket already runs. The
@@ -419,13 +520,10 @@ while IFS= read -r id; do
     route$'\t'*)
       if [ "$started" -ge "$free" ]; then detail="no free lane left for it"; waits=1
       elif [ "$ACT" -eq 0 ]; then started=$((started + 1)); kind="would start"; detail=${v#route$'\t'}
-      elif [ -x "$RESERVE" ] && ! admit_err=$("$RESERVE" admit "$FMH" "$FMH/projects/$(awk -F'\t' -v id="$id" '$1 == id { print $2 }' "$tmp/out")" 2>&1 >/dev/null); then
-        case "$admit_err" in
-          *"cannot be counted"*) detail="copy count unknown (the pool could not be read; the next beat retries)" ;;
-          *) detail="no free copy (the copies left are kept for a red fix)" ;;
-        esac
+      elif ! pool_has_copy "${SPAWNABLE_PROJECT[$id]}"; then
+        detail=${POOL_WAIT_REASON[${SPAWNABLE_PROJECT[$id]}]}
         waits=1
-      elif detail=$(launch "$id" "$(awk -F'\t' -v id="$id" '$1 == id { print $2 }' "$tmp/out")" "${v#route$'\t'}"); then
+      elif detail=$(launch "$id" "${SPAWNABLE_PROJECT[$id]}" "${v#route$'\t'}"); then
         started=$((started + 1)); launched=$((launched + 1)); kind=starting; detail=${v#route$'\t'}
       else idle=1; fi ;;
     *) detail=${v#why$'\t'} ;;
@@ -436,7 +534,7 @@ while IFS= read -r id; do
   record_row "$id" "$idle" "$kind" "$detail"
 done < "$tmp/ordered"
 cat "$tmp/alerts"
-# The pass's own line: the watcher starts this check every minute, and this file is the record that it ran.
+# Record each pass the watcher or an event starts.
 { printf '%s\tpass\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(grep -c . "$tmp/ordered")" "$launched" "$deferred" "$SECONDS" "$([ "$ACT" -eq 1 ] && echo on || echo off)" >> "$PASSES"
   [ "$(wc -l < "$PASSES")" -le 5000 ] || { tail -n 5000 "$PASSES" > "$PASSES.tmp.$$" && mv -f "$PASSES.tmp.$$" "$PASSES"; }; } 2>/dev/null
 [ "$ACT" -eq 0 ] || [ ! -s "$tmp/lead" ] || printf 'auto-dispatch: lead, these tickets are not started by themselves: %s\n' "$(paste -sd';' "$tmp/lead" | sed 's/;/; /g')"

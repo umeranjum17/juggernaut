@@ -15,6 +15,13 @@ raises one finish message, through `bin/jg-live-claim.sh`, and the check closes 
 epic (`goal:<id>:stop:<row>`, `goal:<id>:finish`) before it is printed, so a restart sends none twice. A message whose
 write fails rings once for that reason and is tried again on the next pass.
 
+A Goal declared with `--auto-ship` (the owner's word that its own ship and fix work may start without a lead) wakes
+no lead for `ship` or `fix`. The check runs `jg-goal.sh start-step`: it files the step's ticket, writes its brief and
+approves the start on the home's route through `bin/jg-worker-start.sh`, takes the step row, and the home's dispatch check
+(`core/auto-dispatch`) starts the worker. While the step waits, `jg-goal.sh settle-step` closes it once the trunk lander
+has recorded that ticket as landed (`data/trunk-landings.tsv`). A refused start rings once with its cause and is tried again
+on the next pass. Later steps (`merged` on a forge, `released`, `running`) still go to the lead.
+
 The `proven` step is the check's own: no lead is woken for it. When it is next, the check launches `proof-run.sh`
 detached (the finish line's proof argv, in the home, ending after `JG_GOAL_PROOF_SECS`, default 900) and a later pass
 reads `proof.exit` beside the log. Exit 0 closes the step (`jg-goal.sh prove`) and the Goal finishes, with the proof
@@ -31,6 +38,8 @@ it in the home's row. The registered goal-loop check alone is not a need.
 A `next` wake rings once per Goal and step, again after `JG_GOAL_RESURFACE_SECS` (1800) while the step stays open,
 and at once if the Goal left `next` and came back. Records sit in `data/jg-goal-loop/`. A Goal read that is refused
 raises one wake per reason, with the refusal's text as the reason. `goal-loop.sh state <home>` prints the reduction.
+
+A Goal whose step stays `next` for 10 minutes raises the `fleet-blocked` P1 (`core/loop-stall`, run by the delivery tick), closed only when the step is taken or the Goal leaves `next`.
 
 Install: `core/goal-loop/wiring.sh <home>` (run by `bin/jg-host-wiring.sh`); `unwiring.sh <home>` removes the shim, the
 registration and the installed copy and leaves Goal rows alone. Proof: `bash core/goal-loop/tests/goal-loop.test.sh`, and `journeys/goal-loop.sh` (a fake forge in real time, about 4 minutes; the lead is a script).

@@ -143,7 +143,7 @@
 #                          running a check or removing poll artifacts
 #   heartbeat              fleet-scan backstop found an unsurfaced captain-relevant
 #                          status, unless afk is active
-#   check: ready work waiting with free lane slots: (<open>/<target> open): <ids> - dispatch them now, P0 first, up to project capacity
+#   check: ready work waiting with free lane slots: (<free> of <target> lanes free, <open> working): <ids> - dispatch them now, P0 first, up to project capacity
 #   check: ready work waiting with no worker working: <ids> - dispatch them now, P0 first, up to project capacity
 #                          a primary or squad_lead home's base-cadence scan found dispatchable
 #                          queued work (jg-backlog.sh ready) while the home sits
@@ -157,7 +157,7 @@
 #                          Re-raised while the condition holds, once per
 #                          new ready set and then every READY_WORK_RESURFACE_SECS;
 #                          intake uses HEARTBEAT's base interval, never its backoff
-#   check: ready backlog stalled: <ids> waits with free lanes|no worker working (<open>/<target> open) and nothing started for <n>s - dispatch them now, P0 first, up to project capacity, or hold each with why it waits; Main was told id=<key>
+#   check: ready backlog stalled: <ids> waits with free lanes|no worker working (<free> of <target> lanes free, <open> working) and nothing started for <n>s - dispatch them now, P0 first, up to project capacity, or hold each with why it waits; Main was told id=<key>
 #                          the wait-timers chain's stalled-backlog backstop: a
 #                          squad_lead home's ready, startable work sat on a free
 #                          lane (or with no worker provably working) with no lane
@@ -448,6 +448,11 @@ CHECK_INTERVAL=${JG_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps an
 FAST_CHECK_INTERVAL=${JG_FAST_CHECK_INTERVAL:-30}  # seconds between board-answer ticks (must stay under a minute)
 DISPATCH_INTERVAL=${JG_DISPATCH_INTERVAL:-60}  # seconds between starts of the home's dispatch check (run_fast_checks)
 case "$DISPATCH_INTERVAL" in ''|*[!0-9]*) DISPATCH_INTERVAL=60 ;; esac
+DISPATCH_INTERVAL=$((10#$DISPATCH_INTERVAL))
+CHECK_STAGGER_WINDOW=$((CHECK_INTERVAL / 2))
+[ "$CHECK_STAGGER_WINDOW" -le 119 ] || CHECK_STAGGER_WINDOW=119
+CHECK_SWEEP_DELAY=$((CHECK_INTERVAL + $(jg_home_timer_offset "$JG_HOME" "$CHECK_STAGGER_WINDOW")))
+DISPATCH_DELAY=$((DISPATCH_INTERVAL + $(jg_home_timer_offset "$JG_HOME" "$((DISPATCH_INTERVAL / 2))")))
 CHECK_TIMEOUT=${JG_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 HOME_SUMMARY_INTERVAL=${JG_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
@@ -1353,6 +1358,8 @@ EOF
   watcher_queue resurfaced "$epoch-$seq" >/dev/null || return 1
   case "$kind:$reason" in
     signal:needs-decision:*) reason="signal:${reason#needs-decision:}" ;;
+    *:signal:*|*:stale:*|*:check:*|*:heartbeat*|*:needs-decision:*) ;;
+    *) reason="$kind: $key $reason" ;;
   esac
   wake "$reason"
 }
@@ -2356,9 +2363,10 @@ prompt_gate_check() {  # <window> <task> [tail40]
       return 1
     fi
   fi
-  if [ "$kind" = approve ] || [ "$kind" = reject ]; then
+  if [ "$kind" = approve ] || [ "$kind" = reject ] || [ "$kind" = dismiss ]; then
     act=approval
     [ "$kind" = approve ] || act=rejection
+    [ "$kind" != dismiss ] || act=dismissal
     if [ "$(cat "$mf" 2>/dev/null)" = "$kind:$h" ] && [ "$(age_of "$mf")" -lt 60 ]; then
       _r="$_r; the $act sent under a minute ago did not take"
     else
@@ -2373,6 +2381,10 @@ prompt_gate_check() {  # <window> <task> [tail40]
       elif [ "$kind" = approve ] && jg_backend_send_key "$backend" "$w" Enter "$label" >/dev/null 2>&1; then
         printf 'approve:%s' "$h" > "$mf"
         triage_log "approved permission prompt ($_r): $w $path"
+        return 0
+      elif [ "$kind" = dismiss ] && jg_backend_send_key "$backend" "$w" Escape "$label" >/dev/null 2>&1; then
+        printf 'dismiss:%s' "$h" > "$mf"
+        triage_log "dismissed $prompt ($_r): $w"
         return 0
       elif [ "$kind" = reject ] && jg_backend_send_key "$backend" "$w" Escape "$label" >/dev/null 2>&1; then
         printf 'reject:%s' "$h" > "$mf"
@@ -2678,7 +2690,7 @@ run_check_process() {
     exec gtimeout "$CHECK_TIMEOUT" bash "$c" "$@"
   else
     # shellcheck disable=SC2016  # single quotes are deliberate: Perl expands its own variables.
-    exec perl -e 'my $t = shift; my $owned = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0) unless $owned; exec @ARGV } my $group = $owned ? getpgrp(0) : $pid; my $stop = sub { $SIG{HUP} = $SIG{INT} = $SIG{TERM} = "IGNORE"; kill "TERM", -$group; select undef, undef, undef, 0.2; kill "KILL", -$group; waitpid $pid, 0; exit 124 }; local $SIG{ALRM} = $stop; local $SIG{HUP} = $stop; local $SIG{INT} = $stop; local $SIG{TERM} = $stop; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$CHECK_TIMEOUT" "${JG_CHECK_OWNED_GROUP:-0}" bash "$c" "$@"
+    exec perl -e 'my $t = shift; my $owned = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0) unless $owned; exec @ARGV or exit 127 } my $group = $owned ? getpgrp(0) : $pid; my $stop = sub { $SIG{HUP} = $SIG{INT} = $SIG{TERM} = "IGNORE"; kill "TERM", -$group; select undef, undef, undef, 0.2; kill "KILL", -$group; waitpid $pid, 0; exit 124 }; local $SIG{ALRM} = $stop; local $SIG{HUP} = $stop; local $SIG{INT} = $stop; local $SIG{TERM} = $stop; alarm $t; waitpid $pid, 0; exit(($? & 127) ? 128 + ($? & 127) : $? >> 8)' "$CHECK_TIMEOUT" "${JG_CHECK_OWNED_GROUP:-0}" bash "$c" "$@"
   fi
 }
 
@@ -2694,11 +2706,14 @@ JG_ACTIVE_CHECK_PID=
 JG_ACTIVE_CHECK_PGID=
 JG_CHECK_OUTPUT=
 JG_CHECK_OUTPUT_TMP=
+JG_CHECK_ERROR_TMP=
 JG_CHECK_SIGNAL_PENDING=
 
 jg_check_output_cleanup() {
   [ -z "$JG_CHECK_OUTPUT_TMP" ] || rm -f -- "$JG_CHECK_OUTPUT_TMP"
+  [ -z "$JG_CHECK_ERROR_TMP" ] || rm -f -- "$JG_CHECK_ERROR_TMP"
   JG_CHECK_OUTPUT_TMP=
+  JG_CHECK_ERROR_TMP=
   JG_CHECK_OUTPUT=
 }
 
@@ -2757,7 +2772,7 @@ watch_record_check_cost() {  # <key>
 }
 
 run_check_capture() {
-  local pgid key output tmp
+  local pgid key output tmp rc=0 filing diagnostic
   jg_check_output_cleanup
   key=${JG_CHECK_OUTPUT_KEY:-check}
   printf '%s\t%s\tcheck:%s\n' "$WATCHER_PID" "$JG_WATCH_DELIVERY_IDENTITY" "$key" > "$STATE/.watch-progress" 2>/dev/null || true
@@ -2765,6 +2780,7 @@ run_check_capture() {
   tmp=$(mktemp "$output.XXXXXX") || return 1
   JG_CHECK_OUTPUT_TMP=$tmp
   chmod 0600 "$JG_CHECK_OUTPUT_TMP" || { jg_check_output_cleanup; return 1; }
+  JG_CHECK_ERROR_TMP=$(mktemp "$STATE/.jg-check-error.XXXXXX") || { jg_check_output_cleanup; return 1; }
   JG_CHECK_SIGNAL_PENDING=
   # Defer stop signals only until the check's process group is recorded for
   # watcher_cleanup. Keep command substitutions out of this window: bash 5.2
@@ -2772,7 +2788,7 @@ run_check_capture() {
   trap 'JG_CHECK_SIGNAL_PENDING=1' HUP INT TERM
   times > "$STATE/.watch-times-before" 2>/dev/null || true
   set -m
-  ( JG_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$JG_CHECK_OUTPUT_TMP" 2>/dev/null &
+  ( JG_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$JG_CHECK_OUTPUT_TMP" 2>"$JG_CHECK_ERROR_TMP" &
   JG_ACTIVE_CHECK_PID=$!
   JG_ACTIVE_CHECK_PGID=$JG_ACTIVE_CHECK_PID
   set +m
@@ -2784,13 +2800,22 @@ run_check_capture() {
     jg_check_output_cleanup
     return 1
   fi
-  wait "$JG_ACTIVE_CHECK_PID" 2>/dev/null || true
+  wait "$JG_ACTIVE_CHECK_PID" 2>/dev/null || rc=$?
   JG_ACTIVE_CHECK_PID=
   watch_record_check_cost "$key"
   jg_active_check_stop || return 1
   mv -f -- "$JG_CHECK_OUTPUT_TMP" "$output" || { jg_check_output_cleanup; return 1; }
   JG_CHECK_OUTPUT_TMP=
   JG_CHECK_OUTPUT=$output
+  diagnostic=$JG_CHECK_ERROR_TMP
+  [ -s "$diagnostic" ] || diagnostic=$output
+  if filing=$(jg_watch_check_result "$JG_HOME" "$STATE" "$key" "$rc" "$diagnostic" "$CHECK_TIMEOUT" 2>&1); then
+    [ -z "$filing" ] || triage_log "watcher check $key: ${filing%%$'\n'*}"
+  else
+    triage_log "watcher check $key could not record exit $rc: ${filing%%$'\n'*}"
+  fi
+  rm -f -- "$JG_CHECK_ERROR_TMP"
+  JG_CHECK_ERROR_TMP=
 }
 
 check_output_reference() {
@@ -3048,7 +3073,7 @@ ready_idle() { JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-rea
 # held or in flight) cannot reset the re-raise window. Intake is independent of
 # the heartbeat's idle backoff and runs before an away heartbeat can exit.
 ready_work_waits_idle() {
-  local meta task target open now surfaced surfaced_at surfaced_ids ready_rc freed
+  local meta task target open free now surfaced surfaced_at surfaced_ids ready_rc freed
   READY_WORK_IDS=
   READY_WORK_REASON=
   # Paused: withdraw the queued row so nothing is presented, and drop the
@@ -3083,7 +3108,8 @@ ready_work_waits_idle() {
       ready_idle clear ready-work: || true
       return 1
     fi
-    READY_WORK_REASON="check: ready work waiting with free lane slots ($open/$target open): $READY_WORK_IDS - dispatch them now, P0 first, up to project capacity"
+    free=$((target - open))
+    READY_WORK_REASON="check: ready work waiting with free lane slots ($free of $target lanes free, $open working): $READY_WORK_IDS - dispatch them now, P0 first, up to project capacity"
   else
     for meta in "$STATE"/*.meta; do
       [ -f "$meta" ] || continue
@@ -3154,6 +3180,8 @@ admission_refusal_fresh() {
 # shellcheck disable=SC2034,SC2100 # READY_STALL_MODE and READY_STALL_WHY are read by core/wait-timers, outside the linted set.
 ready_backlog_stall_state() {
   local rows rc id repo proj cfg seen='|' full='|' meta kind cards board data_dir
+  local stall_ids='' block_mode=fallback block_out block_err block_rc=0 first_line bid _rest
+  local -A stall_blocked=()
   READY_STALL_IDS='' READY_STALL_OPEN='' READY_STALL_TARGET='' READY_STALL_LANES='' READY_STALL_MODE='' READY_STALL_WHY=''
   [ -f "$(jg_compat_marker "$JG_HOME")" ] && [ ! -L "$(jg_compat_marker "$JG_HOME")" ] || return 1
   rows=$(jg_ready_work_rows "$JG_HOME"); rc=$?
@@ -3191,8 +3219,37 @@ ready_backlog_stall_state() {
   while read -r id repo; do
     [ -n "$id" ] || continue
     printf '%s\n' "$cards" | grep -Fxq -- "$id" && continue
-    rc=0
-    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$data_dir" "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$id" >/dev/null 2>&1 || rc=$?
+    stall_ids="${stall_ids}${id}"$'\n'
+  done <<EOF
+$rows
+EOF
+  if [ -n "$stall_ids" ]; then
+    block_out=$(mktemp) || return 2
+    block_err=$(mktemp) || { rm -f -- "$block_out"; return 2; }
+    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$data_dir" \
+      "$SCRIPT_DIR/jg-captain-hold.sh" blocking --batch <<< "$stall_ids" > "$block_out" 2> "$block_err" || block_rc=$?
+    first_line=$(head -n 1 "$block_out" 2>/dev/null)
+    if [ "$block_rc" -eq 0 ] && [ "$first_line" = "blocking-batch: ok" ]; then
+      block_mode=ok
+      while IFS=$'\t' read -r bid _rest; do
+        [ -n "$bid" ] && stall_blocked[$bid]=1
+      done < <(tail -n +2 "$block_out")
+    elif [ "$block_rc" -eq 2 ] && grep -q '^jg-captain-hold:' "$block_err" 2>/dev/null; then
+      rm -f -- "$block_out" "$block_err"
+      return 2
+    fi
+    rm -f -- "$block_out" "$block_err"
+  fi
+  while read -r id repo; do
+    [ -n "$id" ] || continue
+    printf '%s\n' "$cards" | grep -Fxq -- "$id" && continue
+    if [ "$block_mode" = ok ]; then
+      rc=1
+      [ -z "${stall_blocked[$id]+x}" ] || rc=0
+    else
+      rc=0
+      JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$data_dir" "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$id" >/dev/null 2>&1 || rc=$?
+    fi
     # One lookup per ready task is a completed bounded unit: beat after each, so
     # a slow lookup across many tasks under host load never ages the beacon.
     watcher_beat ready-stall
@@ -3869,6 +3926,24 @@ comms_feed_sync_detached() {
   COMMS_FEED_PID=$!
 }
 
+# decision_handler_detached: answer the workers' own open questions (core/decision-handler owns the contract). The advisor can
+# take minutes, so the pass runs beside the poll and is never waited on; one pass at a time.
+DECISION_HANDLER_PID=
+decision_handler_detached() {
+  local handler=$SCRIPT_DIR/../core/decision-handler/decision-handler.sh
+  slow_child_due decision-handler || return 0
+  [ -f "$handler" ] || return 0
+  if [ -n "$DECISION_HANDLER_PID" ]; then
+    if kill -0 "$DECISION_HANDLER_PID" 2>/dev/null; then
+      return 0
+    fi
+    wait "$DECISION_HANDLER_PID" 2>/dev/null || true
+    DECISION_HANDLER_PID=
+  fi
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" bash "$handler" tick </dev/null >/dev/null 2>&1 &
+  DECISION_HANDLER_PID=$!
+}
+
 PR_POLL_CONTROL_LOCK=
 PR_POLL_PUBLISH_LOCK=
 
@@ -4100,22 +4175,22 @@ store_pages_doorbell() {
   wake "$reason"
 }
 
-# dispatch_check_start: start the home's trusted dispatch check (state/auto-dispatch.check.sh) detached, once per
-# DISPATCH_INTERVAL, and return at once. It runs the same hash-checked snapshot the sweep runs; the detached shell removes
-# the snapshot when the pass ends. JG_DISPATCH_DETACHED=1 makes the pass keep its lead note and alert for the sweep's
-# inline run (core/auto-dispatch/dispatch.sh), because this start has no reader. The check holds its own lock, so a start
-# while a pass runs is folded into it.
+# Start the trusted dispatch check on a changed input or a staggered timer.
+# A detached pass leaves its lead note and alert for the inline sweep.
+# An in-flight pass absorbs timer requests and coalesces new input.
 dispatch_check_start() {
-  local snapshot
-  [ "$(age_of "$STATE/.last-dispatch-check")" -ge "$DISPATCH_INTERVAL" ] || return 0
-  jg_custom_check_snapshot_prepare "$STATE" auto-dispatch || { jg_custom_check_snapshot_cleanup; return 0; }
-  snapshot=$JG_CUSTOM_CHECK_SNAPSHOT
-  JG_CUSTOM_CHECK_SNAPSHOT=
-  touch "$STATE/.last-dispatch-check"
-  local -a detach=(nohup)
-  ! command -v setsid >/dev/null 2>&1 || detach=(setsid nohup)
-  # shellcheck disable=SC2016 # the detached shell expands its own argument
-  JG_DISPATCH_DETACHED=1 "${detach[@]}" bash -c 'bash "$1"; rm -f -- "$1"' _ "$snapshot" >/dev/null 2>&1 </dev/null &
+  local periodic=1 stamp="$STATE/.last-dispatch-check"
+  if [ -e "$stamp" ]; then
+    if [ "$STATE/dispatch-approved" -nt "$stamp" ] || [ "$CONFIG/auto-dispatch" -nt "$stamp" ] ||
+      [ "$STATE/auto-dispatch.check-trust" -nt "$stamp" ]; then
+      periodic=0
+    else
+      [ "$(age_of "$stamp")" -ge "$DISPATCH_DELAY" ] || return 0
+    fi
+  fi
+  if JG_DISPATCH_DETACHED=1 JG_DISPATCH_PERIODIC=$periodic jg_custom_check_detach "$STATE" auto-dispatch; then
+    touch "$stamp"
+  fi
 }
 
 # The captain's board answers must reach Main within a minute, so they do not
@@ -4123,8 +4198,8 @@ dispatch_check_start() {
 # registration (re-arms it, or says once that it could not) and then runs one
 # check pass; a line it prints becomes a check wake like any check result. The
 # slow sweep skips board-answers.check.sh so a pass is never run twice.
-# The home's dispatch check also starts here, at least every DISPATCH_INTERVAL
-# seconds and never waited for (dispatch_check_start): a pass costs seconds of CPU,
+# The home's dispatch check also starts here when due and is never waited for
+# (dispatch_check_start): a pass costs seconds of CPU,
 # so an inline run would hold this tick and the queue resurface behind it. The
 # slow sweep still runs the check inline, which is where its wake line is delivered.
 run_fast_checks() {
@@ -4145,9 +4220,10 @@ run_fast_checks() {
   # runs: bin/jg-delivery-tick.sh is the one pass both run (core/trunk-landing lands a task whose done-done receipt is a
   # PASS for its exact head into the local trunk and cleans it up, with no lead or human step). The pass queues its own
   # result row; a reason it prints is a row due now, so this cycle rings the model with it.
-  if [ -f "$SCRIPT_DIR/jg-delivery-tick.sh" ] && [ ! -L "$SCRIPT_DIR/jg-delivery-tick.sh" ]; then
+  if [ -f "$SCRIPT_DIR/jg-delivery-tick.sh" ] && [ ! -L "$SCRIPT_DIR/jg-delivery-tick.sh" ] &&
+    jg_delivery_repair_due "$JG_HOME"; then
     JG_CHECK_OUTPUT_KEY=delivery-tick
-    if ! run_check_capture "$SCRIPT_DIR/jg-delivery-tick.sh" "$JG_HOME"; then
+    if ! JG_DELIVERY_TICK_PERIODIC=1 run_check_capture "$SCRIPT_DIR/jg-delivery-tick.sh" "$JG_HOME"; then
       check_capture_skip delivery-tick
     elif [ -s "$JG_CHECK_OUTPUT" ]; then
       reason=$(head -n 1 "$JG_CHECK_OUTPUT")
@@ -4190,25 +4266,42 @@ check_cursor_advance() {
   fi
 }
 
+# Compare registration records with the start of the last sweep. An update during a sweep remains due.
+check_registration_changed() {
+  local record stamp="$STATE/.check-sweep-start"
+  [ -e "$stamp" ] || stamp="$STATE/.last-check"
+  for record in "$STATE"/*.check-trust "$STATE"/*.pr-poll; do
+    case "${record##*/}" in board-answers.check-trust|auto-dispatch.check-trust) continue ;; esac
+    [ ! "$record" -nt "$stamp" ] || return 0
+  done
+  return 1
+}
+
 # Slow per-task checks (juggernaut writes these, e.g. a merged-PR poll).
 # Time-based via .last-check mtime so the cadence survives watcher restarts.
 # A due check runs on every cycle that reaches it, including a cycle whose
 # actionable signal wake is about to exit (see the signal branch): the signal
 # rows are already durable in the queue, so a check result appended here is
 # delivered by the same drain as that signal, and a signal stream cannot
-# starve a check. Checks are due only every CHECK_INTERVAL, so most cycles
-# skip this block and fall straight through.
+# starve a check. New registrations can advance the next sweep. The repair
+# timer adds a stable home offset to CHECK_INTERVAL so homes spread their work.
 # A check that prints a line ends the cycle (wake exits), so the sweep is kept
 # in order by $STATE/.check-cursor: that check's successor is written there and
 # .last-check is left alone, the next sweep starts at the cursor, and only a
 # sweep that reaches its last check stamps .last-check and removes the cursor.
 # A check printing a line every run therefore cannot hide the checks after it.
 run_due_checks() {
-  local c id out reason is_pr_poll provider url host path number custom_snapshot
+  local c id out reason is_pr_poll provider url host path number custom_snapshot reusable
+  local -a poll_command
   local merge_authority merge_authority_record_identity merge_outcome_rc
   local rejected_checks unalerted_checks contribution_check_output contribution_check_diagnostics contribution_check_line
   local cursor_file="$STATE/.check-cursor" cursor found checks=() start=0 n
-  if [ -e "$cursor_file" ] || [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
+  # The explicit token has precedence over stored GitHub logins. Reuse a successful unmerged
+  # reply only for the identical validated URL and state query within this home and sweep.
+  local -A github_unmerged=()
+  if [ -e "$cursor_file" ] || [ ! -e "$STATE/.last-check" ] ||
+    [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_SWEEP_DELAY" ] || check_registration_changed; then
+    [ -e "$cursor_file" ] || touch "$STATE/.check-sweep-start" || return 1
     rejected_checks=
     contribution_check_output=
     for c in "$STATE"/*.check.sh; do
@@ -4262,16 +4355,37 @@ run_due_checks() {
             continue
           fi
           JG_CHECK_OUTPUT_KEY=$id
-          if ! run_check_capture "$SCRIPT_DIR/jg-pr-poll.sh" --validated \
-            "$provider" "$url" "$host" "$path" "$number"; then
+          reusable=0
+          poll_command=("$SCRIPT_DIR/jg-pr-poll.sh" --validated "$provider" "$url" "$host" "$path" "$number")
+          if [ "$provider" = github ] && [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
+            reusable=1
+            if [ -n "${github_unmerged[$url]:-}" ]; then
+              pr_poll_control_release || exit 1
+              watcher_beat due-check
+              continue
+            fi
+            # Keep the registered static poll byte-identical for existing watches. The snapshot
+            # already validated this URL, and an explicit token fixes the credential for the sweep.
+            # shellcheck disable=SC2016 # the check subprocess expands its own argument
+            poll_command=(-c 'reply=$(gh pr view "$1" --json state -q .state) || exit 0
+              case "$reply" in
+                MERGED) printf "%s\n" merged ;;
+                OPEN|CLOSED) printf "%s\n" unmerged ;;
+              esac' _ "$url")
+          fi
+          if ! run_check_capture "${poll_command[@]}"; then
             pr_poll_control_release || exit 1
             check_capture_skip "$c"
             continue
           fi
+          if [ "$reusable" -eq 1 ] && [ "$(< "$JG_CHECK_OUTPUT")" = unmerged ]; then
+            github_unmerged[$url]=1
+            : > "$JG_CHECK_OUTPUT"
+          fi
         elif jg_custom_check_snapshot_prepare "$STATE" "$id"; then
           custom_snapshot=$JG_CUSTOM_CHECK_SNAPSHOT
           JG_CHECK_OUTPUT_KEY=$id
-          if ! run_check_capture "$custom_snapshot"; then
+          if ! JG_DISPATCH_PERIODIC=1 run_check_capture "$custom_snapshot"; then
             jg_custom_check_snapshot_cleanup
             check_capture_skip "$c"
             continue
@@ -4706,6 +4820,7 @@ EOF
 
   # Never waited on: a slow feed export cannot hold the beacon (see the helper).
   comms_feed_sync_detached
+  decision_handler_detached
 
   [ -n "$CYCLE_SWEPT" ] || run_due_checks
   if [ -n "$signal_wake" ]; then

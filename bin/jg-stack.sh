@@ -20,6 +20,8 @@
 #   retire   `up` removes a part an earlier release ran and this one does not (RETIRED below): its
 #            unit is disabled, stopped and deleted, a detached process it recorded is stopped, and its
 #            runtime files go, so a home upgraded across that release ends with nothing of it left.
+#            For the retired NATS bus and its consumers, retirement removes this home's units
+#            only when stopping them leaves other units alone. Their runtime files are preserved.
 #   callers  bin/jg-bootstrap.sh and bin/jg-update.sh run `up`, so a release never lands on a machine
 #            without its services; install.sh runs it last.
 #   refuse   the machine's long-running services (jg-sentinel) belong to Main, and bin/jg-unit-claim.sh owns
@@ -97,14 +99,47 @@ sup=$(supervisor)
 
 # retire_part <part>: remove a part this release no longer runs, once and quietly when nothing is left.
 RETIRED="ntfy deliver"
+RETIRED_BUS_UNITS="router wake-engine wake-watcher dapr bus"
+
+retire_unit() {
+  local name=$1 file=$2 out
+  if ! out=$(systemctl --user disable --now "$name" 2>&1); then
+    out=${out//$'\n'/ }
+    fail "$name" "${out:-systemctl disable --now failed}" "retiring $name"
+  fi
+  rm -f -- "$file" || fail "$name" "cannot remove its unit file" "retiring $name"
+  systemctl --user daemon-reload || fail "$name" "systemctl daemon-reload failed" "retiring $name"
+  systemctl --user reset-failed "$name" >/dev/null 2>&1 || true
+}
+
+retire_bus_units() {
+  local part name file fragment directory related dir=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
+  [ "$sup" = systemd ] || return 0
+  for part in $RETIRED_BUS_UNITS; do
+    name=$(unit_name "$part")
+    file="$dir/$name"
+    [ -f "$file" ] && [ ! -L "$file" ] || continue
+    fragment=$(systemctl --user show "$name" -p FragmentPath --value) \
+      || fail "$name" "cannot read its loaded unit path" "retiring $name"
+    directory=$(systemctl --user show "$name" -p WorkingDirectory --value) \
+      || fail "$name" "cannot read its working directory" "retiring $name"
+    [ "$fragment" -ef "$file" ] && [ "$directory" -ef "$STATE/bus" ] || continue
+    # Consumers are removed before the bus, so any remaining stop dependency must be preserved.
+    related=$(systemctl --user show "$name" --value \
+      -p RequiredBy -p RequisiteOf -p BoundBy -p ConsistsOf -p PropagatesStopTo) \
+      || fail "$name" "cannot read its stop dependencies" "retiring $name"
+    [ -z "$related" ] || continue
+    if grep -Eq '^[[:space:]]*(Also|Alias)[[:space:]]*=' "$file"; then continue; fi
+    retire_unit "$name" "$file"
+    printf 'retired %s: %s removed\n' "$part" "$name"
+  done
+}
+
 retire_part() {
   local part=$1 name dir=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user pid what=''
   name=$(unit_name "$part")
   if [ "$sup" = systemd ] && [ -e "$dir/$name" ]; then
-    systemctl --user disable --now "$name" >/dev/null 2>&1 || true
-    rm -f -- "$dir/$name"
-    systemctl --user daemon-reload || fail "$part" "systemctl daemon-reload failed" "retiring $name"
-    systemctl --user reset-failed "$name" >/dev/null 2>&1 || true
+    retire_unit "$name" "$dir/$name"
     what="$name removed"
   fi
   # A detached process is stopped only when the pid this stack recorded still runs this part.
@@ -119,7 +154,10 @@ retire_part() {
   fi
   [ -z "$what" ] || echo "retired $part: $what"
 }
-if [ "$mode" = up ]; then for part in $RETIRED; do retire_part "$part"; done; fi
+if [ "$mode" = up ]; then
+  retire_bus_units
+  for part in $RETIRED; do retire_part "$part"; done
+fi
 
 # The chat gateway is optional: it runs only where this home has a bot token file. A home without one gets
 # no unit, no line and no failure; a token file removed later retires the unit it had.

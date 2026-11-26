@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Integration test for core/trunk-release/ci-watch.sh (slice H50, report section 8.1): a red release pull request is fixed fast.
 # The watch runs as the registered check does (`ci-watch.sh check <home>`) over a real trunk, with the real bin/jg-trunk.sh and
-# a stand-in only for the forge's check reader (bin/jg-pr-state.sh).
+# fixture backlog, forge check reader and spawn. The real auto-dispatch check starts the repair.
 #
 # T1 The release pull request's checks are pending, or it is merged: nothing is filed or recorded and nothing is printed.
 # T2 A required check failed: one line, one ticket naming the failing check, a red row for the release head in data/trunk-ci.tsv,
@@ -19,13 +19,14 @@ landed() {  # <id>...: each lane lands, then a verify moves the green pin to it
 }
 
 test_a_red_release_is_recorded_and_filed_once() {
-  local out second calls pin
+  local out second calls pin item
   world cw
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
+  repair_fixture
   # shellcheck disable=SC2016 # the stand-in script expands its own variables
   printf '#!/usr/bin/env bash\ncat "%s/pr-checks" 2>/dev/null || true\n' "$W" > "$HOME_D/bin/jg-pr-state.sh"; chmod +x "$HOME_D/bin/jg-pr-state.sh"
   landed c1 c2
   second=$(tip)
+  item=ci-red-release-proj-${second:0:12}
   printf 'proj\ttrunk\t%s\t2\t1000\t%s\n' "$second" "$U" > "$HOME_D/data/trunk-releases.tsv"
 
   : > "$W/backlog-calls"  # the landings above filed their own tickets; only the watch's count here
@@ -47,10 +48,14 @@ test_a_red_release_is_recorded_and_filed_once() {
   pin=$(cat "$HOME_D/state/trunk-green-proj")
   { [ "$pin" != "$second" ] && git -C "$PROJ" merge-base --is-ancestor "$pin" "$second"; } || fail "T2: the green pin must go back below the red head: pin $pin out $out"
   assert_contains "$out" "${pin:0:12}" "T2: the pin must go back to the commit the trunk names"
+  assert_contains "$(cat "$W/tickets/$item")" "Failing check: unit-tests (FAILURE)" "T2: repair context retains the failed check"
+  await_repair_lane "$item"
+  assert_contains "$(cat "$W/spawn-calls")" "--ticket $item " "T2: the red release starts its own lane"
   pass 'T2 a red release files one ticket, records the red and moves the green pin back'
 
   out=$(watch) || fail "T3: $out"
   [ -z "$out" ] && [ "$(grep -c . "$W/backlog-calls")" = 1 ] && [ "$(grep -c "	red" "$HOME_D/data/trunk-ci.tsv")" = 1 ] || fail "T3: a second tick must do nothing: $out"
+  [ "$(wc -l < "$W/spawn-calls")" = 1 ] || fail "T3: a second tick must not start another lane"
   pass 'T3 the same red head is handled once'
 
   [ "$(cat "$HOME_D/data/trunk-release-age.tsv")" = "$(printf 'proj\t2\t%s\t%s' "$(awk -F'\t' 'NR == 1 { print $4 }' "$HOME_D/data/trunk-landings.tsv")" \

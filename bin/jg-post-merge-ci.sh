@@ -100,10 +100,17 @@ red_run_url() {  # <repo> <run id>
 # filed, and raises the line-red alert. A backlog that refuses the add is reported and
 # changes nothing else.
 file_red_item() {
-  local item=$1 filed=$2 run_id=$3 workflow=$4 conclusion=$5 head=$6 body=$7 wake=$8
-  if "$SCRIPT_DIR/jg-backlog.sh" add "$item" \
+  local item=$1 filed=$2 run_id=$3 workflow=$4 conclusion=$5 head=$6 body=$7 wake=$8 project
+  if [ "$MAIN_MODE" = 1 ]; then
+    project=${RESTORE_DIR##*/}
+    project=${project:-juggernaut}
+  else
+    project=$(sed -n 's/^project=//p' "$STATE/$ID.meta" 2>/dev/null | tail -n 1)
+    project=${project##*/}
+  fi
+  if BEADS_ACTOR=alert:repair "$SCRIPT_DIR/jg-backlog.sh" add "$item" \
     "Post-merge CI went red" -l blocker \
-    --kind ship --body "$body" >/dev/null 2>&1; then
+    --kind ship --body "$body" ${project:+--repo "$project"} >/dev/null 2>&1; then
     printf '%s %s\n' "$run_id" "$head" > "$filed"
     say "filed $item for red run $run_id ($workflow, $conclusion) at head $head"
     JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise line-red "post-merge-ci-$item" --note "$wake" 2>/dev/null \

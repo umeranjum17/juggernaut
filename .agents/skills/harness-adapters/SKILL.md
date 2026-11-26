@@ -29,7 +29,7 @@ On `unknown`, ask the captain instead of guessing.
 A current captain override beats detection, while a per-task override governs only that dispatch.
 For recovery and control, use the exact `harness=` in `state/<id>.meta`; never infer it from a model or provider.
 
-Deliver lifecycle actions only through `../../../bin/jg-control.sh <task-id> interrupt|exit|relaunch`.
+Deliver lifecycle actions only through `jg crew control interrupt <task-id>`, `jg crew control exit <task-id>`, or `jg crew control relaunch <task-id>`.
 Never type an interrupt key or exit command through `jg-send`, where routing-marked lifecycle text becomes chat.
 Trust handling is complete only when inspection proves the target started processing its instructions; delivery success alone is not proof.
 Muse, Gemini, and Devin are verified only for operator and Recon work, never a Squad Lead or primary.
@@ -37,15 +37,15 @@ AGY is verified for operator and Recon work and as the primary Overwatch, never 
 
 ## Detection
 
-`../../../bin/jg-harness.sh` prints Juggernaut's own harness from verified environment markers and process ancestry, and owns how they combine.
+script: `../../../bin/jg-harness.sh` prints Juggernaut's own harness from verified environment markers and process ancestry, and owns how they combine.
 A marker names its harness, but a structural ancestor of a different harness outranks it, because a marker is ordinary environment state a child or a multiplexer can retain while ancestry is what proves who owns the process tree.
 Only `JG_PI_HARNESS=pi-signed` at the launch boundary together with `PI_CODING_AGENT=true` selects Pi-signed; shared unmarked launcher ancestry remains Pi.
 omp publishes no marker of its own; `JG_OMP_HARNESS=omp` is Juggernaut's launch marker and the anchored process name `omp` is its ancestry evidence, as `references/harness/omp.md` records.
-`../../../bin/jg-spawn.sh` owns worker marker establishment, while the README launch command owns the signed-primary boundary.
-`../../../bin/jg-harness.sh crew` resolves `config/crew-harness`, where absent or `default` means Juggernaut's own harness.
-`../../../bin/jg-harness.sh squad lead <id>` resolves the mate-specific profile under [`configuration`](../../../docs/configuration.md#choose-the-squad-lead-harness).
-`../../../bin/jg-spawn.sh` re-resolves on every spawn, and an explicit per-spawn argument wins for that spawn.
-A new adapter's verified marker and command name must land in `../../../bin/jg-harness.sh`.
+script: `../../../bin/jg-spawn.sh` owns worker marker establishment, while the README launch command owns the signed-primary boundary.
+`jg crew harness crew` resolves `config/crew-harness`, where absent or `default` means Juggernaut's own harness.
+`jg crew harness squad_lead <id>` resolves the mate-specific profile under [`configuration`](../../../docs/configuration.md#choose-the-squad-lead-harness).
+script: `../../../bin/jg-spawn.sh` re-resolves on every spawn, and an explicit per-spawn argument wins for that spawn.
+A new adapter's verified marker and command name must land in script: `../../../bin/jg-harness.sh`.
 
 ## Operation-to-reference matrix
 

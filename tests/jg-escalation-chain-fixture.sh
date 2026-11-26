@@ -12,8 +12,18 @@ set -eu
 TMP_ROOT=$(jg_test_tmproot jg-escalation-chain)
 FORK="$TMP_ROOT/fork"
 mkdir -p "$FORK"
-# toolchain.versions is the pin table the copied scripts read.
-cp -a "$ROOT/bin" "$ROOT/core" "$ROOT/toolchain.versions" "$FORK/"
+if [ -e "$ROOT/.git" ]; then
+  # Use tracked working files so the fixture cannot read local build outputs.
+  (
+    set -o pipefail
+    git -C "$ROOT" ls-files -z -- bin core toolchain.versions |
+      tar -C "$ROOT" --null -T - -cf - |
+      tar -C "$FORK" -xf -
+  ) || fail "could not copy tracked code into the escalation fixture"
+else
+  # The local suite also runs baseline tests on a git archive without an index.
+  cp -a "$ROOT/bin" "$ROOT/core" "$ROOT/toolchain.versions" "$FORK/"
+fi
 # The fork is the code root the copied scripts read (core/item-store/adapters/tickets.py among them); it holds no .git,
 # so the worktree-tangle check stays inert as wake-helpers.sh wants.
 export JG_ROOT_OVERRIDE=$FORK

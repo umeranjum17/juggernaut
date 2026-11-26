@@ -38,8 +38,6 @@ closed_lane() {  # <task-id> <head>
   local id=$1 head=$2 res
   res=$(lane_cleanup "$id" "$head" "")
   resume_waiters "$id"
-  # shellcheck disable=SC2034 # read by kick_dispatch in trunk-landing.sh
-  DISPATCH_KICK_DUE=1
   cleanup_outbox "closed $id: no commit of its own, its head ${head:0:12} is already on the local trunk, so no landing was needed; $res"
 }
 

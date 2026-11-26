@@ -1,0 +1,9 @@
+{
+  "name": "shopfront",
+  "scripts": {
+    "lint": "eslint .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": { "eslint": "^9.0.0", "typescript": "^5.6.0", "vitest": "^2.0.0" }
+}

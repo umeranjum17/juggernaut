@@ -305,7 +305,9 @@ autoarm_cause() {  # [arm-output-file]
 # the closed arm's pid as JG_WATCH_PREDECESSOR_ARM_PID; a mid-turn cycle has no
 # predecessor and starts as a plain arm. The arm must outlive this hook's exit,
 # so it is detached three ways: nohup, stdio away from the hook's pipes, and its
-# own process group. Its one status line is awaited within the arm's own
+# own process group. Only its status line is read, so it does not follow a
+# cycle another arm already holds (JG_WATCH_ARM_NO_FOLLOW, bin/jg-watch-arm.sh
+# header). Its one status line is awaited within the arm's own
 # confirmation budget plus slack, and an unconfirmed launch is retried boundedly
 # (JG_AUTOARM_SUCCESSOR_ATTEMPTS, default 2): a launch forked into session
 # teardown meets exactly the transient failures - a dying lock holder, a racing
@@ -328,7 +330,7 @@ start_detached_arm() {  # [predecessor-arm-pid]
     budget=$(JG_GUARD_GRACE="$GRACE" jg_watcher_confirmation_budget "$STATE" "$SCRIPT_DIR/jg-watch.sh" "$JG_HOME")
     case $- in *m*) monitor_was_on=1 ;; esac
     set -m 2>/dev/null || true
-    JG_WATCH_PREDECESSOR_ARM_PID=${1:-} JG_GUARD_GRACE="$GRACE" \
+    JG_WATCH_PREDECESSOR_ARM_PID=${1:-} JG_GUARD_GRACE="$GRACE" JG_WATCH_ARM_NO_FOLLOW=1 \
       nohup "$SCRIPT_DIR/jg-watch-arm.sh" >"$out" 2>&1 </dev/null &
     pid=$!
     [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true

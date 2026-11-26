@@ -176,6 +176,7 @@ probe() { # <harness> <model> [account folder] [task id]: the one-line prompt th
     pi*) timeout "$TEST_SECS" "${on_account[@]}" pi --model "$2" -p --no-session "$prompt" ;;
     claude*) timeout "$TEST_SECS" "${on_account[@]}" claude -p --model "$2" "$prompt" ;;
     codex*) timeout "$TEST_SECS" "${on_account[@]}" codex exec --skip-git-repo-check --model "$2" "$prompt" ;;
+    agy) timeout "$TEST_SECS" agy -p "$prompt" --model "$2" ;;
     *) exit 1 ;;
   esac ) 2>&1 </dev/null
   rc=$?

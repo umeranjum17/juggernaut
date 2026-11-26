@@ -38,9 +38,9 @@ test_stalled_backlog_wakes_the_lead_and_main_and_refires() {
   ! grep -q 'waiting-timer-backlog-overdue' "$f" || fail "Main was told before 10 minutes passed"
   backdate_backlog "$l" 200
   cycle_until_true "$l" fired 1 "$f"
-  grep -q '^blocked \[key=waiting-timer-[0-9a-f]*-lead1-g[0-9]*-ready-backlog\] \[at=[0-9]*\]: waiting-timer-backlog-overdue: lead1 (ready work jg-alpha, free lanes 0/2 open, nothing started for [0-9]*s' "$f" \
+  grep -q '^blocked \[key=waiting-timer-[0-9a-f]*-lead1-g[0-9]*-ready-backlog\] \[at=[0-9]*\]: waiting-timer-backlog-overdue: lead1 (ready work jg-alpha, free lanes (2 of 2 lanes free, 0 working), nothing started for [0-9]*s' "$f" \
     || fail "a stalled backlog did not reach Main: $(cat "$f") $(cat "$l/err")"
-  grep -q '^check: ready backlog stalled: jg-alpha waits with free lanes (0/2 open)' "$l/events" || fail "the lead was not woken again: $(cat "$l/events")"
+  grep -q '^check: ready backlog stalled: jg-alpha waits with free lanes (2 of 2 lanes free, 0 working)' "$l/events" || fail "the lead was not woken again: $(cat "$l/events")"
   cycle "$l"
   [ "$(grep -c 'waiting-timer-backlog-overdue' "$f")" -eq 1 ] || fail "the stall re-fired inside the interval"
   backdate_backlog "$l" 901

@@ -1,0 +1,117 @@
+{
+  "area": "muster",
+  "owner": "m2b",
+  "entries": [
+    {
+      "path": ["muster", "approve", "manifest"],
+      "meaning": "Check a project's documents, save an exact copy of them and write the manifest the captain will be asked to approve.",
+      "roles": ["overwatch"],
+      "args": [
+        {"name": "ticket", "type": "text", "required": true},
+        {"name": "project-dir", "type": "text", "required": true},
+        {"name": "depth", "type": "text", "required": true},
+        {"name": "change", "type": "text", "required": false},
+        {"name": "before", "type": "text", "required": false}
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-muster-approval.sh manifest <ticket> <project-dir> --depth <depth> [--change <change> --before <before>] --json",
+      "repeat_key": "ticket",
+      "exits": {"0": 0, "1": 1, "2": 2},
+      "schema": "muster.approve.manifest.v1",
+      "script": "bin/jg-muster-approval.sh",
+      "operation": "manifest",
+      "aliases": []
+    },
+    {
+      "path": ["muster", "approve", "ask"],
+      "meaning": "Ask the captain, in plain words, to approve the agreed documents of one saved manifest.",
+      "roles": ["overwatch"],
+      "args": [
+        {"name": "ticket", "type": "text", "required": true},
+        {"name": "project-name", "type": "text", "required": true},
+        {"name": "manifest-sha12", "type": "text", "required": true}
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-muster-approval.sh ask <ticket> <project-name> <manifest-sha12>",
+      "repeat_key": "ticket",
+      "exits": {"0": 0, "1": 1, "2": 2},
+      "schema": "muster.approve.ask.v1",
+      "script": "bin/jg-muster-approval.sh",
+      "operation": "ask",
+      "aliases": []
+    },
+    {
+      "path": ["muster", "approve", "verify"],
+      "meaning": "Say whether the captain's yes is on file for the newest saved manifest and the documents still match it.",
+      "roles": ["overwatch"],
+      "args": [
+        {"name": "ticket", "type": "text", "required": true},
+        {"name": "project-dir", "type": "text", "required": true}
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-muster-approval.sh verify <ticket> <project-dir>",
+      "repeat_key": null,
+      "exits": {"0": 0, "1": 1, "2": 2},
+      "schema": "muster.approve.verify.v1",
+      "script": "bin/jg-muster-approval.sh",
+      "operation": "verify",
+      "aliases": []
+    },
+    {
+      "path": ["muster", "exception", "ask"],
+      "meaning": "Ask the captain whether planning may start for one ticket without agreed documents.",
+      "roles": ["overwatch"],
+      "args": [
+        {"name": "ticket", "type": "text", "required": true},
+        {"name": "project-name", "type": "text", "required": true}
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-muster-approval.sh exception-ask <ticket> <project-name>",
+      "repeat_key": "ticket",
+      "exits": {"0": 0, "1": 1, "2": 2},
+      "schema": "muster.exception.ask.v1",
+      "script": "bin/jg-muster-approval.sh",
+      "operation": "exception-ask",
+      "aliases": []
+    },
+    {
+      "path": ["muster", "exception", "use"],
+      "meaning": "Say whether the captain let planning start for this one ticket without agreed documents.",
+      "roles": ["overwatch"],
+      "args": [
+        {"name": "ticket", "type": "text", "required": true}
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-muster-approval.sh exception <ticket>",
+      "repeat_key": null,
+      "exits": {"0": 0, "1": 1, "2": 2},
+      "schema": "muster.exception.use.v1",
+      "script": "bin/jg-muster-approval.sh",
+      "operation": "exception",
+      "aliases": []
+    },
+    {
+      "path": ["muster", "verify-plan"],
+      "meaning": "Check requirements coverage, settled engineering practices, use-case links, and the plan against the approved journeys and charter order.",
+      "roles": ["overwatch"],
+      "args": [
+        {"name": "ticket", "type": "text", "required": true},
+        {"name": "plan", "type": "text", "required": true}
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-muster-approval.sh verify-plan <ticket> <plan>",
+      "repeat_key": null,
+      "exits": {"0": 0, "1": 1, "2": 2},
+      "schema": "muster.verify-plan.v1",
+      "script": "bin/jg-muster-approval.sh",
+      "operation": "verify-plan",
+      "aliases": []
+    }
+  ]
+}

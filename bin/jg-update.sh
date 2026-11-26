@@ -70,7 +70,7 @@
 #
 # FLEET LIVE MOVE (--base): a project registered local-trunk is moved from its LOCAL trunk, never from origin.
 # `jg-trunk.sh live` exports the trunk tip's own bin/ and runs this script from that copy:
-#   jg-update.sh --base <sha> --project <project-dir> --branch <trunk-branch> [--home <lead-home>]
+#   jg-update.sh --base <sha> --project <dir> --branch <trunk> [--home <lead-home>]
 # One home at a time, registered Squad Lead homes first and Main's clone LAST (pool worktrees and lane branches are not
 # homes and are never touched). The homes are Main's registry plus Main, whichever home runs this: a lead home follows its
 # parent record up to Main (bin/jg-fleet-homes-lib.sh), so a go-live run from a lead moves every home, itself included.

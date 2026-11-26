@@ -28,7 +28,7 @@ add_check() {  # <dir> <id> <body>: write and bind a custom check
 start_watch() {  # <dir> -> sets WPID
   env HOME="$1/home" XDG_CONFIG_HOME="$1/home/config" TMPDIR="$1/tmp" PATH="$1/fakebin:$PATH" \
     JG_HOME="$1" JG_STATE_OVERRIDE="$1/state" JG_CONFIG_OVERRIDE="$1/config" \
-    JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=1 JG_POLL=1 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
+    JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL="${2:-1}" JG_POLL=1 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
     JG_SQUAD_LEAD_LIVENESS_SECS=99999999 JG_STALE_ESCALATE_SECS=999999 \
     "$WATCH" > "$1/out" 2> "$1/err" &
   WPID=$!
@@ -105,6 +105,108 @@ SH
   pass "the ready-work reader reads a $BIG_BYTES-byte priority listing without an argument-list error"
 }
 
+repair_board() {  # <fixture> <backlog command...>
+  local d=$1; shift
+  env -u JG_TASK_ID HOME="$d/home" XDG_CONFIG_HOME="$d/home/config" TMPDIR="$d/tmp" PATH="$d/fakebin:$PATH" \
+    JG_HOME="$d" JG_STATE_OVERRIDE="$d/state" bash "$ROOT/bin/jg-backlog.sh" "$@"
+}
+
+repair_tick() {  # <fixture> <exit status>
+  local d=$1
+  printf '%s\n' "$2" > "$d/state/flaky-exit"
+  rm -f -- "$d/state/.last-check"
+  start_watch "$d" 999999
+  wait_for 30 test -f "$d/state/.last-check" \
+    || { stop_watch; fail "the repair sweep did not finish: $(cat "$d/err")"; }
+  stop_watch
+}
+
+assert_repair_tickets() {  # <fixture> <count>
+  local rows count
+  rows=$(repair_board "$1" list) || fail "the fixture backlog could not be read"
+  count=$(grep -Ec '^ *watch-check-[[:alnum:]]+,' <<< "$rows" || true)
+  [ "$count" -eq "$2" ] || fail "expected $2 repair tickets, got $count: $rows"
+}
+
+test_three_consecutive_errors_file_one_repair_ticket() {
+  local d id out note
+  d=$(new_home repair)
+  # shellcheck disable=SC2016 # The registered check expands its own state path and status.
+  add_check "$d" flaky 'read -r status < "$JG_STATE_OVERRIDE/flaky-exit"
+    [ "$status" -eq 0 ] || echo "fixture check failure" >&2
+    exit "$status"'
+  add_check "$d" healthy 'echo healthy-check-result'
+  repair_tick "$d" 7
+  repair_tick "$d" 7
+  assert_repair_tickets "$d" 0
+  repair_tick "$d" 0
+  repair_tick "$d" 7
+  repair_tick "$d" 7
+  assert_repair_tickets "$d" 0
+  repair_tick "$d" 7
+  assert_repair_tickets "$d" 1
+  id=$(repair_board "$d" list | grep -Eo 'watch-check-[[:alnum:]]+' | head -n 1)
+  repair_board "$d" show "$id" | grep -q 'fixture check failure' \
+    || fail "the repair ticket did not include the check diagnostic"
+  repair_tick "$d" 7
+  assert_repair_tickets "$d" 1
+  grep -q 'healthy-check-result' "$d/state/.jg-check-output-healthy" \
+    || fail "the healthy check did not run after the failed check"
+  repair_tick "$d" 0
+  for _ in 1 2 3; do repair_tick "$d" 7; done
+  assert_repair_tickets "$d" 2
+  pass "a success resets the streak; three consecutive failures file one ticket per episode across watcher restarts"
+
+  ln -sn "$ROOT/bin" "$d/bin"
+  ln -sn "$ROOT/toolchain.versions" "$d/toolchain.versions"
+  mkdir -p "$d/projects/juggernaut"
+  printf -- '- juggernaut [local-trunk +yolo] - fixture project (added 2026-11-19)\n' > "$d/data/projects.md"
+  : > "$d/config/owner-rules"
+  : > "$d/config/backlog-intake-loose"
+  printf '{"default":{"harness":"codex","model":"fixture","effort":"medium"}}\n' > "$d/config/crew-dispatch.json"
+  printf 'on\n' > "$d/config/auto-dispatch"
+  printf '1\n' > "$d/config/lane-target"
+  cat > "$d/spawn" <<'SH'
+#!/usr/bin/env bash
+printf 'kind=ship\n' > "$JG_HOME/state/$1.meta"
+printf '%s\n' "$*" >> "$JG_HOME/spawned"
+SH
+  chmod +x "$d/spawn"
+
+  repair_board "$d" add jg-m7h "[captain-ask] Start check repairs automatically" --body "Start the repairs our checks file." >/dev/null \
+    || fail "could not file the standing ask"
+  if out=$(repair_brief "$d" "$id" 2>&1); then fail "the repair used an unsigned standing ask"; fi
+  assert_contains "$out" "needs the recorded standing approval on jg-m7h" "the brief names the missing approval"
+  repair_dispatch "$d" >/dev/null || fail "the dispatcher could not inspect the pending repair"
+  assert_absent "$d/state/dispatch-approved/$id" "an unsigned standing ask cannot approve dispatch"
+  note=$(printf '[chat telegram 42:101]\nStart the repairs our checks file.\n' | env -u JG_TASK_ID JG_HOME="$d" "$ROOT/bin/jg-inbox.sh" note --request-id repair-fixture --json - | jq -r .id)
+  env -u JG_TASK_ID JG_HOME="$d" "$ROOT/bin/jg-inbox.sh" approve "$note" jg-m7h >/dev/null \
+    || fail "could not record the standing approval"
+
+  repair_board "$d" add watch-check-human "Repair a failing watcher check" --kind ship --repo juggernaut --priority 1 --body "Human-filed work." >/dev/null \
+    || fail "could not file the same-title control"
+  if out=$(repair_brief "$d" watch-check-human 2>&1); then fail "the human-filed ticket used the standing approval"; fi
+  assert_contains "$out" "owner-rules: no owner ask" "a human-filed ticket must still need its own owner ask"
+  out=$(repair_dispatch "$d") || fail "automatic repair dispatch failed: $out"
+  wait_for 20 test -s "$d/spawned" || fail "no repair reached spawn: $out"
+  id=$(awk '{ print $1; exit }' "$d/spawned")
+  assert_contains "$(cat "$d/data/$id/brief.md")" "fixture check failure" "the repair brief carries the check's diagnostic"
+  assert_absent "$d/state/dispatch-approved/watch-check-human" "the same-title control received automatic approval"
+  [[ "$id" =~ ^watch-check-[[:alnum:]]{12}$ ]] || fail "the dispatcher started a ticket it did not file"
+  pass "the watcher repair inherits the standing approval and reaches spawn automatically"
+  pass "a human-filed ticket with the same title is refused"
+}
+
+repair_brief() {
+  env -u JG_TASK_ID JG_HOME="$1" bash "$ROOT/bin/jg-brief.sh" "$2" juggernaut --mode local-trunk --ticket "$2"
+}
+
+repair_dispatch() {
+  env -u JG_TASK_ID JG_HOME="$1" JG_AUTO_DISPATCH_SPAWN="$1/spawn" JG_AUTO_DISPATCH_RESERVE=/bin/true \
+    bash "$ROOT/core/auto-dispatch/dispatch.sh" check "$1"
+}
+
 test_a_huge_check_result_wakes_with_a_short_reason_and_the_watcher_lives
 test_a_failed_capture_is_a_logged_skip_not_a_watcher_exit
 test_the_ready_work_reader_takes_a_huge_backlog_listing
+test_three_consecutive_errors_file_one_repair_ticket

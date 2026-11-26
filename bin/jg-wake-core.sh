@@ -24,7 +24,8 @@
 #           on stderr and exits 2, never 0 or 1, so a caller can tell a broken reader from an
 #           empty queue.
 #
-# Usage: jg-wake-core.sh [flags] <command> [args] - see core/wake/cmd/jg-wake-core/main.go.
+# Usage: jg-wake-core.sh <command> [<args...>]
+# See core/wake/cmd/jg-wake-core/main.go for commands and flags before the command.
 set -u
 
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
@@ -50,7 +51,6 @@ stale() {
 build() {
   local tmp
   command -v "$GO" >/dev/null 2>&1 || return 1
-  mkdir -p "${BIN%/*}" || return 1
   tmp="$BIN.tmp.$$"
   if ! ( cd "$SOURCE_DIR" && "$GO" build -o "$tmp" ./cmd/jg-wake-core ) >&2; then
     rm -f -- "$tmp"
@@ -60,7 +60,26 @@ build() {
   mv -f -- "$tmp" "$BIN"
 }
 
-if stale && ! build; then
+# Use the existing portable lock only when the executable needs building.
+# Source it with the cache directory as state so a read creates nothing in
+# the actual home, including when the compiler is missing or fails.
+build_once() (
+  local cache_dir lock
+  cache_dir=$(dirname -- "$BIN")
+  mkdir -p -- "$cache_dir" || return 1
+  JG_STATE_OVERRIDE="$cache_dir"
+  # shellcheck source=bin/jg-wake-lib.sh
+  . "$SCRIPT_DIR/jg-wake-lib.sh"
+  lock="$BIN.build.lock"
+  if ! jg_lock_acquire_wait_max "$lock" 60; then
+    printf 'jg-wake-core: cannot acquire build lock %s\n' "$lock" >&2
+    return 1
+  fi
+  trap 'jg_lock_release "$lock"' EXIT
+  if stale; then build; fi
+)
+
+if stale && ! build_once; then
   printf 'jg-wake-core: no runnable wake core at %s, and no Go toolchain to build one (set JG_WAKE_CORE_GO, or install go): refusing to guess what the wake queue holds or what class an event has\n' "$BIN" >&2
   exit 2
 fi

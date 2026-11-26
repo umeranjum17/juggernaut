@@ -1,0 +1,43 @@
+{
+  "area": "muster",
+  "owner": "m5",
+  "entries": [
+    {
+      "path": ["muster", "drafts"],
+      "meaning": "Keep a version of every Muster document that changed and show each one's status, version, what is open and what changed, as one board page and one folder of files. Works at any stage.",
+      "roles": ["overwatch"],
+      "args": [
+        {"name": "project", "type": "text", "required": true},
+        {"name": "out", "type": "path", "required": false, "flag": "--out"},
+        {"name": "json", "type": "flag", "required": false, "flag": "--json"}
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-muster-drafts.sh drafts <project> [--out <dir>] [--json]",
+      "repeat_key": "project: a repeat keeps no new version unless a document changed",
+      "exits": {"0": 0, "1": 1, "2": 2},
+      "schema": "muster.drafts.v1",
+      "script": "bin/jg-muster-drafts.sh",
+      "operation": "drafts",
+      "aliases": []
+    },
+    {
+      "path": ["muster", "checked"],
+      "meaning": "Record that the re-check a changed upstream document asked for found nothing to change.",
+      "roles": ["overwatch"],
+      "args": [
+        {"name": "project", "type": "text", "required": true},
+        {"name": "document", "type": "text", "required": true}
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-muster-drafts.sh checked <project> <document>",
+      "repeat_key": "project+document: the second call finds no re-check open and is refused",
+      "exits": {"0": 0, "1": 1, "2": 2},
+      "schema": "muster.checked.v1",
+      "script": "bin/jg-muster-drafts.sh",
+      "operation": "checked",
+      "aliases": []
+    }
+  ]
+}

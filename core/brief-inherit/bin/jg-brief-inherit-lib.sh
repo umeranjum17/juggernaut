@@ -22,7 +22,7 @@ jg_brief_inherit_owner_rules() {
   [ -f "$1/owner-rules" ] || return 0
   [ -f "$lib" ] || { echo "error: $1/owner-rules is installed but $lib is missing" >&2; exit 1; }
   # shellcheck disable=SC1090 # the feature lib is found at run time
-  . "$lib" && jg_owner_rules_check "${DATA:-}" "${ID:-}" "${MODE:-}" "$2"
+  . "$lib" && jg_owner_rules_check "${DATA:-}" "${ID:-}" "${MODE:-}" "$2" "${TICKET:-}"
 }
 
 # Prepend config/brief-include-shared.md to BRIEF_INCLUDE_BODY, which already holds the

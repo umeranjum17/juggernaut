@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# A real cycle handoff retains its beacon; cleaned lanes cannot replay alarms.
+# A real cycle handoff retains its beacon and never runs two arms on one cycle;
+# cleaned lanes cannot replay alarms.
 set -u
 # shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
@@ -135,81 +136,176 @@ test_live_lane_replays() { (
   pass "a live task with a missing status still replays its $kind alarm"
 ); }
 
-# A --take-over successor starts over the predecessor's beacon and runs a first
-# scan longer than the grace. Its beacon must keep advancing through that scan,
-# and a watcher killed afterwards must still raise the alarm exactly once.
-test_takeover_first_scan() { (
-  local dir state arm1='' arm2='' i n p out max=0 age marks banners warnings
+# Start an arm in the current case's home and wait for its status line.
+# Sets ARM to its pid; its output goes to <out>.
+start_arm() { # <out> [arm arguments...]
+  local out=$1 i
+  shift
+  "$ROOT/bin/jg-watch-arm.sh" "$@" > "$out" 2>&1 &
+  # shellcheck disable=SC2031 # Each case starts its own background jobs in its own subshell.
+  ARM=$!
+  # The arm prints its verdict once the first scan completes, inside its own confirmation budget; the bound only stops a hang.
+  for ((i=0; i<900; i++)); do
+    grep -qE '^watcher: (started|attached|FAILED)' "$out" 2>/dev/null && return 0
+    sleep 0.1
+  done
+}
+
+# The reasons the cycle-exit ledger of <state> records, one per line.
+cycle_reasons() { # <state>
+  sed -n 's/.*	reason=\([^	]*\).*/\1/p' "$1/.watch-cycle-exits.log" 2>/dev/null
+}
+
+# Eight two-second checks make a scan of about sixteen seconds, longer than the
+# fifteen-second grace, with a finished unit every two seconds. The grace is 15 s
+# because the real beacon aged to 5 to 8 s through this scan at host load 15 to 35.
+slow_scan() { # <dir>
+  local n
+  for n in 1 2 3 4 5 6 7 8; do
+    cat > "$1/state/slow$n.check.sh" <<SH
+#!/usr/bin/env bash
+sleep 2
+printf x >> "$1/units"
+SH
+    chmod 0700 "$1/state/slow$n.check.sh"
+    "$ROOT/bin/jg-check-register.sh" "slow$n" >/dev/null || fail "could not register slow$n"
+  done
+}
+
+# A --take-over hands the running cycle to the new arm instead of stopping it
+# (the live churn: every take-over killed a healthy watcher seconds into its
+# life and started a cold one). The watcher, its lock and its beacon never
+# change hands, so across more than one grace the beacon stays fresh, the
+# supervision predicate Main's lead check reads never reports the home down,
+# and no row records a taken-over or killed cycle. A watcher killed afterwards
+# must still raise the alarm exactly once.
+test_takeover_adopts_the_running_cycle() { (
+  local dir state arm1='' arm2='' p watcher i out max=0 age banners warnings needed=0
   dir=$(make_case takeover)
   state="$dir/state"
-  # shellcheck disable=SC2031 # This case runs in its own subshell by design.
+  # shellcheck disable=SC2030,SC2031 # This case runs in its own subshell by design.
   export JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_POLL=0.2 JG_SIGNAL_GRACE=0 \
     JG_CHECK_INTERVAL=0 JG_HEARTBEAT=999999 JG_GUARD_GRACE=15 JG_SUPERVISION_MODEL=persistent
+  # shellcheck disable=SC2030,SC2031 # This case runs in its own subshell by design.
   export PATH="$dir/fakebin:$PATH"
   # shellcheck source=bin/jg-wake-lib.sh
   . "$ROOT/bin/jg-wake-lib.sh"
+  # shellcheck source=bin/jg-supervision-lib.sh
+  . "$ROOT/bin/jg-supervision-lib.sh"
   trap 'for p in $arm1 $arm2; do kill "$p" 2>/dev/null; done; kill "$(cat "$state/.watch.lock/pid" 2>/dev/null)" 2>/dev/null; wait 2>/dev/null || true' EXIT
   printf 'project=x\nkind=ship\n' > "$state/lane.meta"
-  # Eight two-second checks make a scan of about sixteen seconds, longer than the
-  # fifteen-second grace, with a finished unit every two seconds. The grace is 15 s because the real beacon aged to 5 to 8 s
-  # through this scan at host load 15 to 35.
-  for n in 1 2 3 4 5 6 7 8; do
-    cat > "$state/slow$n.check.sh" <<SH
-#!/usr/bin/env bash
-sleep 2
-printf x >> "$dir/units"
-SH
-    chmod 0700 "$state/slow$n.check.sh"
-    "$ROOT/bin/jg-check-register.sh" "slow$n" >/dev/null || fail "could not register slow$n"
-  done
-  "$ROOT/bin/jg-watch-arm.sh" > "$dir/arm1.out" 2>&1 &
-  arm1=$!
-  # The arm prints its verdict once the first scan completes, inside its own confirmation budget; the bound only stops a hang.
-  for ((i=0; i<900; i++)); do
-    grep -qE '^watcher: (started|FAILED)' "$dir/arm1.out" 2>/dev/null && break
-    sleep 0.1
-  done
+  slow_scan "$dir"
+  start_arm "$dir/arm1.out"
+  arm1=$ARM
   grep -q '^watcher: started' "$dir/arm1.out" || fail "first arm never started: $(cat "$dir/arm1.out")"
-  # A whole first scan has finished, so the predecessor's beacon is on disk.
-  for ((i=0; i<600; i++)); do [ "$(wc -c < "$dir/units" 2>/dev/null || echo 0)" -ge 8 ] && break; sleep 0.1; done
+  watcher=$(cat "$state/.watch.lock/pid")
+  start_arm "$dir/arm2.out" --take-over "$arm1"
+  arm2=$ARM
+  grep -qx "watcher: attached pid=$watcher (beacon [0-9]*s)" "$dir/arm2.out" \
+    || fail "take-over did not adopt the running watcher $watcher: $(cat "$dir/arm2.out")"
+  wait_for_exit "$arm1" 50 || fail "the arm that handed its cycle over still runs"
+  arm1=''
+  # Sample across more than one grace while the adopted watcher keeps scanning.
   : > "$dir/units"
-  "$ROOT/bin/jg-watch-arm.sh" --take-over "$arm1" > "$dir/arm2.out" 2>&1 &
-  arm2=$!
-  # The arm prints its verdict once the first scan completes, inside its own confirmation budget; the bound only stops a hang.
-  for ((i=0; i<900; i++)); do
-    grep -qE '^watcher: (started|FAILED)' "$dir/arm2.out" 2>/dev/null && break
-    sleep 0.1
-  done
-  grep -q '^watcher: started' "$dir/arm2.out" || fail "take-over never started: $(cat "$dir/arm2.out")"
-  # Sample the beacon across more than one grace of the successor's first scan.
-  marks=0
   for ((i=0; i<200; i++)); do
     age=$(jg_path_age "$state/.last-watcher-beat")
     [ "$age" -le "$max" ] || max=$age
-    if [ "$(wc -c < "$dir/units" 2>/dev/null || echo 0)" -ge 1 ]; then marks=$((marks + 1)); fi
-    healthy "$dir" || [ "$(wc -c < "$dir/units" 2>/dev/null || echo 0)" -lt 1 ] \
-      || fail "take-over successor read DOWN mid first scan (beacon ${age}s, grace 15s)"
+    healthy "$dir" || fail "adopted watcher read DOWN (beacon ${age}s, grace 15s)"
+    jg_supervision_status "$state" 15
+    [ "$JG_SUP_NEEDED" = false ] || needed=$((needed + 1))
+    if jg_supervision_unhealthy "$state" 15; then
+      fail "supervision read down across the hand-over (beacon ${age}s, grace 15s)"
+    fi
     sleep 0.1
   done
-  [ "$marks" -ge 50 ] || fail "fixture: the first scan did not run past the grace window ($marks samples)"
-  echo "# beacon age peaked at ${max}s through the first scan (grace 15s)"
-  [ "$max" -lt 15 ] || fail "beacon aged to ${max}s through the take-over's first scan"
+  [ "$needed" -eq 200 ] || fail "fixture: the home did not need supervision throughout ($needed of 200 samples)"
+  [ "$(wc -c < "$dir/units")" -ge 8 ] || fail "fixture: the adopted watcher did not keep scanning"
+  [ "$(cat "$state/.watch.lock/pid")" = "$watcher" ] || fail "the watcher lock changed hands"
+  kill -0 "$arm2" 2>/dev/null || fail "the taking arm stopped following the cycle: $(cat "$dir/arm2.out")"
+  echo "# beacon age peaked at ${max}s across the hand-over (grace 15s)"
+  [ "$max" -lt 15 ] || fail "beacon aged to ${max}s across the hand-over"
+  ! cycle_reasons "$state" | grep -q -e '^taken-over' -e '^signal-exit$' \
+    || fail "a take-over still stopped a cycle: $(cycle_reasons "$state" | tr '\n' ' ')"
+  grep -q "^arm_pid=[0-9]*	watcher_pid=$watcher	.*	reason=handed-over	.*	successor=attached:$watcher" "$state/.watch-cycle-exits.log" \
+    || fail "the hand-over row does not name the adopted watcher: $(cat "$state/.watch-cycle-exits.log")"
   banners=$("$ROOT/bin/jg-guard.sh" 2>&1 >/dev/null | grep -c 'WATCHER DOWN')
-  [ "$banners" -eq 0 ] || fail "guard alarmed on a live take-over successor"
+  [ "$banners" -eq 0 ] || fail "guard alarmed on an adopted watcher"
 
   # The other direction: a killed watcher is still a real alarm, raised once.
-  kill -KILL "$arm2" "$(cat "$state/.watch.lock/pid")" "$arm1" 2>/dev/null
-  arm1='' arm2=''
+  kill -KILL "$arm2" "$watcher" 2>/dev/null
+  arm2=''
   sleep 7
   banners=0 warnings=0
-  for n in 1 2 3; do
+  for i in 1 2 3; do
     out=$("$ROOT/bin/jg-guard.sh" 2>&1 >/dev/null)
     banners=$((banners + $(printf '%s\n' "$out" | grep -c 'WATCHER DOWN')))
     warnings=$((warnings + $(printf '%s\n' "$out" | grep -c 'watcher still down')))
   done
   [ "$banners" -eq 1 ] || fail "killed watcher raised $banners full alarms across three checks, wanted 1"
   [ "$warnings" -eq 2 ] || fail "killed watcher repeats were not the one-line reminder ($warnings)"
-  pass "take-over first scan keeps its beacon fresh; a killed watcher alarms once"
+  pass "take-over adopts the running cycle: beacon fresh, supervision never down, no cycle stopped; a killed watcher alarms once"
+); }
+
+# An attached arm whose watcher delivered a wake, with no successor coming,
+# reports that wake within the hand-off window. It used to wait the whole
+# confirmation budget, which grows by a check timeout per registered check
+# (here 258 s; 837 s in a live lead home), while nothing watched the home.
+test_attached_arm_reports_a_delivered_wake_promptly() { (
+  local dir state arm1='' arm2='' p started elapsed
+  dir=$(make_case attached-delivered)
+  state="$dir/state"
+  # shellcheck disable=SC2030,SC2031 # This case runs in its own subshell by design.
+  export JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_POLL=0.2 JG_SIGNAL_GRACE=0 \
+    JG_CHECK_INTERVAL=0 JG_HEARTBEAT=999999 JG_GUARD_GRACE=15 JG_SUPERVISION_MODEL=persistent
+  # shellcheck disable=SC2030,SC2031 # This case runs in its own subshell by design.
+  export PATH="$dir/fakebin:$PATH"
+  trap 'for p in $arm1 $arm2; do kill "$p" 2>/dev/null; done; kill "$(cat "$state/.watch.lock/pid" 2>/dev/null)" 2>/dev/null; wait 2>/dev/null || true' EXIT
+  slow_scan "$dir"
+  start_arm "$dir/arm1.out"
+  arm1=$ARM
+  grep -q '^watcher: started' "$dir/arm1.out" || fail "first arm never started: $(cat "$dir/arm1.out")"
+  start_arm "$dir/arm2.out"
+  arm2=$ARM
+  grep -q '^watcher: attached' "$dir/arm2.out" || fail "second arm did not attach: $(cat "$dir/arm2.out")"
+  printf 'done: finished lane\n' > "$state/lane.status"
+  wait_for_exit "$arm1" 600 || fail "the owner never delivered the lane"
+  arm1=''
+  grep -q '^signal:' "$dir/arm1.out" || fail "fixture: the owner's close was not the lane signal: $(cat "$dir/arm1.out")"
+  started=$(date +%s)
+  wait_for_exit "$arm2" 600 || fail "the attached arm never reported the delivered wake"
+  arm2=''
+  elapsed=$(( $(date +%s) - started ))
+  echo "# the attached arm reported ${elapsed}s after the owner's close (hand-off window 15s)"
+  grep -q '^signal:' "$dir/arm2.out" || fail "the attached arm did not report the delivered wake: $(cat "$dir/arm2.out")"
+  [ "$elapsed" -le 25 ] || fail "the attached arm held the delivered wake ${elapsed}s"
+  pass "an attached arm reports a delivered wake within the hand-off window, not the confirmation budget"
+); }
+
+# A detached arm nobody reads (JG_WATCH_ARM_NO_FOLLOW) confirms a live cycle and
+# leaves instead of following it as a second arm.
+test_no_follow_arm_does_not_race_the_owner() { (
+  local dir state arm1='' arm2='' p watcher
+  dir=$(make_case no-follow)
+  state="$dir/state"
+  # shellcheck disable=SC2030,SC2031 # This case runs in its own subshell by design.
+  export JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_POLL=0.2 JG_SIGNAL_GRACE=0 \
+    JG_CHECK_INTERVAL=0 JG_HEARTBEAT=999999 JG_GUARD_GRACE=15 JG_SUPERVISION_MODEL=persistent
+  # shellcheck disable=SC2030,SC2031 # This case runs in its own subshell by design.
+  export PATH="$dir/fakebin:$PATH"
+  trap 'for p in $arm1 $arm2; do kill "$p" 2>/dev/null; done; kill "$(cat "$state/.watch.lock/pid" 2>/dev/null)" 2>/dev/null; wait 2>/dev/null || true' EXIT
+  start_arm "$dir/arm1.out"
+  arm1=$ARM
+  grep -q '^watcher: started' "$dir/arm1.out" || fail "first arm never started: $(cat "$dir/arm1.out")"
+  watcher=$(cat "$state/.watch.lock/pid")
+  JG_WATCH_ARM_NO_FOLLOW=1 start_arm "$dir/arm2.out"
+  arm2=$ARM
+  wait_for_exit "$arm2" 50 || fail "the no-follow arm stayed attached as a second arm"
+  arm2=''
+  grep -qx "watcher: attached pid=$watcher (beacon [0-9]*s)" "$dir/arm2.out" \
+    || fail "the no-follow arm did not confirm the live cycle: $(cat "$dir/arm2.out")"
+  [ "$(ls -A "$state/.watch-arms")" = "$arm1" ] || fail "an arm other than the owner is recorded: $(ls -A "$state/.watch-arms")"
+  kill -0 "$watcher" 2>/dev/null || fail "the no-follow arm stopped the owner's watcher"
+  pass "a no-follow arm confirms a live cycle and leaves it to its owner"
 ); }
 
 result=0
@@ -217,5 +313,7 @@ test_handoff || result=1
 test_cleaned_lane || result=1
 test_live_lane_replays signal || result=1
 test_live_lane_replays stale || result=1
-test_takeover_first_scan || result=1
+test_takeover_adopts_the_running_cycle || result=1
+test_attached_arm_reports_a_delivered_wake_promptly || result=1
+test_no_follow_arm_does_not_race_the_owner || result=1
 exit "$result"

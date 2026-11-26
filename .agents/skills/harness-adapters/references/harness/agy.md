@@ -1,7 +1,7 @@
 # Antigravity CLI
 
 Antigravity's `agy` TUI, verified end to end on 2026-09-10 with agy 1.2.0 on Linux through the Herdr backend.
-Verified as an operator and Recon adapter on 2026-09-10, and as the primary Overwatch on 2026-11-20 with agy 1.5.11; `../../../../../bin/jg-spawn.sh` still refuses a Squad Lead launch on it, because no Squad Lead launch on agy has been verified.
+Verified as an operator and Recon adapter on 2026-09-10, and as the primary Overwatch on 2026-11-20 with agy 1.5.11; `script: ../../../../../bin/jg-spawn.sh` still refuses a Squad Lead launch on it, because no Squad Lead launch on agy has been verified.
 `../../../../../docs/verification/agy.md` owns how every fact below was established and what is still unproven.
 
 ## Operating facts
@@ -19,14 +19,14 @@ Verified as an operator and Recon adapter on 2026-09-10, and as the primary Over
 | Autonomy | `--dangerously-skip-permissions` auto-approves tool calls for the run. |
 | Marker | None; a live TUI carries no `AGY_*` or `ANTIGRAVITY_*` variable. |
 | Resume | `--continue` and `--conversation` exist but carry no verified pane-resume contract; use deterministic relaunch. |
-| Model | `--model <id>` with the bare catalog id from `agy models` (for example `gemini-3.8-flash-high`); `bin/jg-spawn.sh` refuses a requested id a reachable listing omits. The listing is a remote fetch, so the probe runs stdin-detached under the shared hard bound and an unreachable or hung listing launches unvalidated with a notice. |
+| Model | `--model <id>` with the bare catalog id from `agy models` (for example `gemini-3.8-flash-high`); `script: bin/jg-spawn.sh` refuses a requested id a reachable listing omits. The listing is a remote fetch, so the probe runs stdin-detached under the shared hard bound and an unreachable or hung listing launches unvalidated with a notice. |
 | Effort | `--effort low\|medium\|high`; `xhigh` and `max` stay in task metadata under the record-and-omit contract. |
 | Composer | Borderless bare `>` row, which the shared classifier reads as `unknown` under the dead-shell rule, never `empty`; steering confirms delivery through native agent-state and the delivery footer instead, the cursor precedent. |
 
 ## Trust, and where the decision persists
 
 Every task worktree is a path agy has never seen, so an unregistered launch stops on `Do you trust the contents of this project?` with the safe choice `Yes, I trust this folder` preselected, and an unanswered dialog sends the turn into agy's scratch directory instead of the worktree.
-There is no launch flag that suppresses the dialog, but agy honours a `trustedWorkspaces` entry in the captain's own `~/.gemini/antigravity-cli/settings.json` written ahead of launch (verified live), so `../../../../../bin/jg-spawn.sh` pre-registers the worktree through `../../../../../bin/jg-agy-trust.sh` before launch, the claude shape: the helper refuses anything but a linked worktree of the spawning project, records both the logical pane path and its resolved form because agy compares the logical cwd, and preserves every other key in the store.
+There is no launch flag that suppresses the dialog, but agy honours a `trustedWorkspaces` entry in the captain's own `~/.gemini/antigravity-cli/settings.json` written ahead of launch (verified live), so `script: ../../../../../bin/jg-spawn.sh` pre-registers the worktree through `script: ../../../../../bin/jg-agy-trust.sh` before launch, the claude shape: the helper refuses anything but a linked worktree of the spawning project, records both the logical pane path and its resolved form because agy compares the logical cwd, and preserves every other key in the store.
 The post-launch readiness gate is the backstop: it answers a dialog that renders anyway with a single Enter, then requires a busy verdict (Herdr's native `working` status or the pinned `esc to cancel` row) before the spawn reports success, and on a path that was not pre-registered it never counts a busy verdict as ready until the dialog has been answered, because Herdr's native verdict can precede the dialog.
 A pane whose brief cannot be confirmed to run in the worktree fails the spawn, records the failure in the task status, and closes the endpoint.
 Never steer into a pane still showing the dialog; a spawn that reported success has already cleared it.
@@ -38,13 +38,13 @@ The unauthenticated failure mode was not observed, so treat any auth prompt or r
 
 ## Detection
 
-Detected by ancestry alone: `../../../../../bin/jg-harness.sh` matches the anchored process name `agy`, never `*agy*`.
-No environment marker is promoted: `AGENT=1` observed on a live TUI is an inherited launcher value, not an agy identity, and agy does not clear an inherited `CLAUDECODE` - but a structural agy ancestor now outranks that retained marker, which `../../../../../bin/jg-harness.sh` decides without depending on the spawn's own launch-boundary marker clearing.
+Detected by ancestry alone: `script: ../../../../../bin/jg-harness.sh` matches the anchored process name `agy`, never `*agy*`.
+No environment marker is promoted: `AGENT=1` observed on a live TUI is an inherited launcher value, not an agy identity, and agy does not clear an inherited `CLAUDECODE` - but a structural agy ancestor now outranks that retained marker, which `script: ../../../../../bin/jg-harness.sh` decides without depending on the spawn's own launch-boundary marker clearing.
 The session-lock name vocabulary in `../../../../../bin/jg-session-lock-lib.sh` carries the anchored name `agy`, because agy is the direct parent of both its hook commands and its `run_command` shells, so a primary's session start finds the agy process as the session.
 
 ## Worker busy state and turn end
 
-`../../../../../bin/jg-spawn.sh` arms no busy generation for agy and writes no sidecar, exactly because no writer could ever clear a seeded record.
+`script: ../../../../../bin/jg-spawn.sh` arms no busy generation for agy and writes no sidecar, exactly because no writer could ever clear a seeded record.
 `jg_busy_agy_tail_busy` matches the pinned `esc to cancel` status row alone, hardcoded with no environment override, and `jg_busy_classify` reports `unknown agy-regex` rather than idle when it is absent, because a long turn can scroll the marker out of the captured tail.
 Teardown removes nothing agy-specific because the spawn leaves nothing behind.
 
@@ -55,9 +55,9 @@ Verified on agy 1.5.11 (`../../../../../docs/verification/agy.md` owns the evide
 | Surface | Fact |
 | --- | --- |
 | Launch | Plain `agy` in the home, trust answered before the first message; a prompt queued with `--prompt-interactive` runs before the trust answer loads the hooks. |
-| Session start | Run tier: the `SessionStart` hook runs `../../../../../bin/jg-sessionstart-agy.sh`, which injects the digest as a system message and takes the lock as the agy process ([`sessionstart-nudge.md`](../../../../../docs/sessionstart-nudge.md#agy)). |
-| Watcher | `bin/jg-watch-arm.sh` as its own `run_command` background task; agy wakes the session with a `<SYSTEM_MESSAGE>` when it exits ([`agy.md`](../../../../../docs/supervision-protocols/agy.md)). |
-| Pre-tool | `PreToolUse` on `run_command` runs `bin/jg-arm-pretool-check.sh --agy`; agy denies on any non-zero hook exit or a `{}` reply, so an allow prints nothing ([`arm-pretool-check.md`](../../../../../docs/arm-pretool-check.md)). |
-| Turn end | `Stop` runs `../../../../../bin/jg-turnend-guard-agy.sh`, which returns `decision: continue` once per turn ([`turnend-guard.md`](../../../../../docs/turnend-guard.md#harness-integrations)). |
+| Session start | Run tier: the `SessionStart` hook runs `script: ../../../../../bin/jg-sessionstart-agy.sh`, which injects the digest as a system message and takes the lock as the agy process ([`sessionstart-nudge.md`](../../../../../docs/sessionstart-nudge.md#agy)). |
+| Watcher | `jg radio watch-arm` as its own `run_command` background task; agy wakes the session with a `<SYSTEM_MESSAGE>` when it exits ([`agy.md`](../../../../../docs/supervision-protocols/agy.md)). |
+| Pre-tool | `PreToolUse` on `run_command` runs `script: bin/jg-arm-pretool-check.sh --agy`; agy denies on any non-zero hook exit or a `{}` reply, so an allow prints nothing ([`arm-pretool-check.md`](../../../../../docs/arm-pretool-check.md)). |
+| Turn end | `Stop` runs `script: ../../../../../bin/jg-turnend-guard-agy.sh`, which returns `decision: continue` once per turn ([`turnend-guard.md`](../../../../../docs/turnend-guard.md#harness-integrations)). |
 | Persistent cd | Not applicable: every `run_command` is a fresh `bash -c` child of agy, so a `cd` never outlives its command. |
 | Not built | Supervision host, away-mode daemon delivery into an agy pane, the subagent guard, and context re-emit after a compaction. |

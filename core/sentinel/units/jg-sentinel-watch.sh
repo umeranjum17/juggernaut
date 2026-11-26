@@ -79,12 +79,14 @@ alert_ages() {
 }
 
 # Start the watcher again, detached from this pass so it outlives the unit's run.
+# Nothing waits on this arm's close, so it does not follow a cycle another arm
+# already holds (JG_WATCH_ARM_NO_FOLLOW, bin/jg-watch-arm.sh header).
 revive() {
   [ -x "$START" ] || return 1
   if command -v setsid >/dev/null 2>&1; then
-    JG_HOME="$JG_HOME" setsid "$START" </dev/null >>"$STATE/.sentinel.log" 2>&1 &
+    JG_HOME="$JG_HOME" JG_WATCH_ARM_NO_FOLLOW=1 setsid "$START" </dev/null >>"$STATE/.sentinel.log" 2>&1 &
   else
-    JG_HOME="$JG_HOME" "$START" </dev/null >>"$STATE/.sentinel.log" 2>&1 &
+    JG_HOME="$JG_HOME" JG_WATCH_ARM_NO_FOLLOW=1 "$START" </dev/null >>"$STATE/.sentinel.log" 2>&1 &
   fi
 }
 

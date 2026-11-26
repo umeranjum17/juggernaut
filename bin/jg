@@ -1,14 +1,28 @@
 #!/usr/bin/env bash
-# jg - the one command an agent runs: jg <verb> [args]. It finds the home and the ticket from
+# jg - the one command an agent runs: jg <verb> [args]. A worker verb finds the home and the ticket from
 # the folder it runs in (core/agent-cli/lib.sh) and calls the script that owns the verb.
-# core/agent-cli/README.md owns the verbs and their output form.
+# core/agent-cli/README.md owns the worker verbs and their output form. Any other first word is a noun of
+# the command contract (core/agent-cli/contract/README.md): core/agent-cli/dispatch.sh runs it, and a word
+# that is neither exits 2.
 set -u
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 CLI=$SCRIPT_DIR/../core/agent-cli
-verb=${1:-help}
+verb=${1:-}
 case "$verb" in
-  -h|--help|help|'') sed -n '/^## Verbs/,$p' "$CLI/README.md" | sed '1d'; exit 0 ;;
-  status|done|wait|progress|inbox|proof|land|ask) shift; exec bash "$CLI/$verb.sh" "$@" ;;
-  alert) shift; exec bash "$CLI/alerts.sh" "$@" ;;
-  *) printf 'jg: no verb %s. Verbs: status, done, wait, progress, inbox, proof, land, alert, ask. Next: jg help\n' "$verb" >&2; exit 2 ;;
+  alert|land|proof)
+    if [ "$#" -gt 1 ] && bash "$CLI/dispatch.sh" matches "$@"; then
+      exec bash "$CLI/dispatch.sh" --as jg run "$@"
+    fi ;;
+esac
+case "$verb" in
+  '') sed -n '/^## Verbs/,$p' "$CLI/README.md" | sed '1d'; exit 0 ;;
+  -h|--help|help)
+    sed -n '/^## Verbs/,$p' "$CLI/README.md" | sed '1d'
+    printf '\n'; exec bash "$CLI/dispatch.sh" --as jg help ;;
+  status)
+    bash -c '. "$1"; jg_cli_context' _ "$CLI/lib.sh" >/dev/null || { printf 'jg: status is the worker view. Overwatch: run jg sitrep. Next: jg sitrep\n' >&2; exit 2; }
+    exec bash "$CLI/dispatch.sh" --as jg run "$@" ;;
+  *)
+    if bash "$CLI/dispatch.sh" has "$verb"; then exec bash "$CLI/dispatch.sh" --as jg run "$@"; fi
+    printf 'jg: no verb %s. Verbs: status, done, wait, progress, inbox, proof, land, alert, ask. Next: jg help\n' "$verb" >&2; exit 2 ;;
 esac

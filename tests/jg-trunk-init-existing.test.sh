@@ -9,6 +9,10 @@
 # T3 Once the home has its record again, the check reports nothing and the memory of the refusal is gone.
 # T4 A trunk ref that names a commit the clone does not hold reads as absent to a commit lookup but exists to git: init names that cause,
 #    and the tick never shows git's "cannot lock ref" (the muxr, takeone and writeboost homes, 21 Nov 2026).
+# T5 A lead home's registry lists only its own project, but its projects/ also holds a clone the main home owns, with that home's trunk,
+#    and the item store holds a local-trunk row for it: the check never asks init for a trunk of that clone, so it says nothing on any tick,
+#    moves no ref and writes no record (the writeboost home, 19 Nov 2026, 197 failures in 6 hours until bin/jg-project-mode.sh stopped
+#    reading the row for an unlisted clone).
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -70,7 +74,38 @@ test_a_ref_naming_a_missing_commit_is_named() {
   pass 'a trunk ref naming a missing commit is named once, never as git'"'"'s cannot lock ref'
 }
 
+# A lead home with its own listed project and, beside it, a clone the main home owns: the main home's trunk is in it, the home's registry
+# does not list it, and the item store (config/item-store) holds a local-trunk row for it, as the cut-over wrote for every project.
+unlisted_clone_world() {  # <name>: sets SHARED
+  world "$1"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"   # the check runs the home's own bin
+  SHARED="$W/main-home-clone"; jg_git_init_commit "$SHARED"; git -C "$SHARED" branch trunk
+  ln -sn "$SHARED" "$HOME_D/projects/shared"
+  : > "$HOME_D/config/item-store"
+  local p
+  for p in proj shared; do
+    JG_HOME="$HOME_D" python3 -I "$ROOT/core/item-store/adapters/policy.py" --from-message --channel chat --message-id "m-$p" \
+      --project "$p" --level standard --mode local-trunk >/dev/null || fail "the store must take a local-trunk row for $p"
+  done
+}
+
+test_an_unlisted_clone_is_never_initialized() {
+  unlisted_clone_world unlisted
+  local refs out
+  # The case is only real while the store calls the clone local-trunk and the home's registry does not list it.
+  JG_HOME="$HOME_D" python3 -I "$ROOT/core/item-store/adapters/policy.py" --row shared | grep -q 'mode=local-trunk' || fail "the store must hold a local-trunk row for the unlisted clone"
+  ! grep -q '^- shared ' "$HOME_D/data/projects.md" || fail "the home's registry must not list the clone"
+  [ -d "$HOME_D/projects/shared/.git" ] && [ ! -e "$HOME_D/state/trunk-tip-shared" ] || fail "the clone must be in projects/ with no trunk record in this home"
+  refs=$(git -C "$SHARED" for-each-ref)
+  out=$(tick; tick; tick)
+  [ -z "$out" ] || fail "no tick may say anything about the unlisted clone: $out"
+  [ "$refs" = "$(git -C "$SHARED" for-each-ref)" ] || fail "the main home's clone must keep exactly its refs"
+  [ ! -e "$HOME_D/state/trunk-tip-shared" ] && [ ! -e "$HOME_D/data/jg-trunk-landing/.init-refused-shared" ] || fail "the check must write no record for the unlisted clone"
+  pass 'the landing check leaves an unlisted clone with a store row alone: silent, no ref moved, no record written'
+}
+
 test_init_names_the_existing_branch
 test_the_tick_reports_once
 test_a_restored_record_clears_the_memory
 test_a_ref_naming_a_missing_commit_is_named
+test_an_unlisted_clone_is_never_initialized

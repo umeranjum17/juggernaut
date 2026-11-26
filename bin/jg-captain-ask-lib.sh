@@ -16,6 +16,44 @@ captain_ask_itself() {  # <show-output>
   printf '%s\n' "$1" | grep -qx '  ask: ask'
 }
 
+captain_ask_root() {  # <ticket>; follow the store's parent edges in this home
+  local id=$1 show parent seen=' '
+  while [ -n "$id" ] && [[ $seen != *" $id "* ]]; do
+    show=$(backlog_cmd show "$id" --full) || return 1
+    if captain_ask_itself "$show"; then printf '%s\n' "$id"; return 0; fi
+    seen+="$id "
+    parent=$(printf '%s\n' "$show" | sed -n 's/^  parent: //p' | head -1)
+    case $parent in *[!A-Za-z0-9._-]*) return 1 ;; esac
+    id=$parent
+  done
+  return 1
+}
+
+# Repair filers record their origin in the store's created_by field. Titles and
+# body text are descriptions, so neither can qualify a ticket for this order.
+captain_ask_repair_filer() {
+  case "$1" in check:repair|alert:repair) return 0 ;; *) return 1 ;; esac
+}
+
+captain_ask_filer() (  # <ticket>; read the stored actor instead of the ticket text.
+  set -o pipefail
+  jg_backlog_bd "$JG_HOME" show "$1" --json | jq -r '(if type == "array" then .[0] else . end).created_by // ""'
+)
+
+captain_ask_repair_order() (  # Print the standing ask only while its approval verifies.
+  local order=jg-m7h show home=$JG_HOME repair_state=${STATE:?}
+  if [ -e "$(jg_compat_marker "$home")" ]; then
+    jg_squad_lead_parent_record_parse "$(jg_compat_parent_marker "$home")" || return 1
+    [ "$JG_SQUAD_LEAD_PARENT_ROUTE" = local ] || return 1
+    home=$JG_SQUAD_LEAD_PARENT_HOME
+    repair_state=$home/state
+  fi
+  show=$(jg_backlog_beads_read "$home/config" show "$order" --full) || return 1
+  captain_ask_itself "$show" || return 1
+  JG_HOME="$home" STATE="$repair_state" captain_ask_build_basis "$order" "$show" >/dev/null || return 1
+  printf '%s\n' "$order"
+)
+
 guard_captain_ask() {  # <id>
   local pr
   captain_ask_row "$1"
@@ -80,7 +118,7 @@ guard_captain_ask_hold() {  # <id>
 # to confirm it (decision D1). captain_ask_build_basis names the record a ticket rests on:
 #   1. `approved-by-captain: <ref> sig=<hmac>` in its body. Only captain_ask_approval_line writes
 #      one: bin/jg-captain-hold.sh answer (his recorded board answer) and bin/jg-inbox.sh approve
-#      (his own note) call it. The sig is an HMAC over the ticket id and ref under
+#      (his own note), backlog add and Main's plan route call it. The sig is an HMAC over the ticket id and ref under
 #      state/captain-approval.key (mode 0600, made on first write), so a hand-written line, or one
 #      copied from another ticket, never verifies.
 #   2. `owner-words: note:<id> "<his words>"` in its body: an order that carries the owner's own
@@ -94,14 +132,51 @@ captain_ask_approval_sig() {  # <ticket> <ref> <key-file>; prints the hex HMAC
 }
 
 captain_ask_approval_line() {  # <ticket> <ref>; prints the signed line, making the key if absent
-  local key="${STATE:?}/captain-approval.key"
+  local key="${STATE:?}/captain-approval.key" tmp sig
   case "$2" in ''|*[!A-Za-z0-9._:-]*) fail "approval reference must be a plain token (a note id or answer digest): $2" ;; esac
   command -v openssl >/dev/null 2>&1 || fail "openssl is required to sign a captain approval"
   if [ ! -s "$key" ]; then
     mkdir -p "$STATE" || fail "cannot make $STATE"
-    (umask 077; openssl rand -hex 32 > "$key") || fail "cannot make the captain approval key at $key"
+    tmp=$(mktemp "$STATE/.captain-approval.XXXXXX") || fail "cannot stage captain approval key"
+    if openssl rand -hex 32 > "$tmp"; then ln "$tmp" "$key" 2>/dev/null || true; fi
+    rm -f "$tmp"
+    [ -s "$key" ] || fail "cannot make the captain approval key at $key"
   fi
-  printf 'approved-by-captain: %s sig=%s\n' "$2" "$(captain_ask_approval_sig "$1" "$2" "$key")"
+  sig=$(captain_ask_approval_sig "$1" "$2" "$key")
+  [[ $sig =~ ^[a-f0-9]{64}$ ]] || fail "cannot sign the captain approval for $1"
+  printf 'approved-by-captain: %s sig=%s\n' "$2" "$sig"
+}
+
+captain_ask_latest_chat() {  # print the newest chat note's id in this home
+  local note latest=''
+  for note in "$STATE/inbox/"*.note "$STATE/inbox/handled/"*.note; do
+    [ -f "$note" ] && [ ! -L "$note" ] && [[ -z $latest || $note -nt $latest ]] || continue
+    if awk '/^--$/ { if (getline > 0 && /^\[chat [^]]+\]( |$)/) ok=1; exit } END { exit !ok }' "$note"; then
+      latest=$note
+    fi
+  done
+  [ -n "$latest" ] || return 1
+  note=${latest##*/}
+  printf '%s\n' "${note%.note}"
+}
+
+captain_ask_route_file() {  # <show-output> [ticket]
+  local file
+  file=$(captain_ask_body "$1" | sed -n 's/^Captain order route: \(\/.*\)$/\1/p' | tail -1)
+  if [ -z "$file" ] && [ -n "${2:-}" ] && [ -s "${STATE:?}/routed-orders/${2//./-}" ]; then
+    read -r file < "$STATE/routed-orders/${2//./-}" || return 1
+  fi
+  printf '%s\n' "$file"
+}
+
+captain_ask_route_guard() {  # <ticket> <show-output>; accepts a routed row only on Main's signature
+  local file owner=main marker
+  file=$(captain_ask_route_file "$2" "$1")
+  [ -n "$file" ] || return 0
+  marker=$(jg_compat_marker "${JG_HOME:-}")
+  if [ -f "$marker" ]; then owner=$(cat "$marker"); fi
+  captain_ask_own_ref "$1" "$2" "route:$owner:" >/dev/null && return 0
+  fail "cannot verify Main's approval for $1. Main must restore the lead's local parent binding or its approval key if missing, then run bin/jg-plan-route.sh $(printf '%q' "$file")"
 }
 
 captain_ask_build_gated() {  # <show-output>; 0 when a ship build needs the captain's approval
@@ -133,9 +208,11 @@ captain_ask_own_ref() {  # <ticket> <show-output>; prints the ref of the first l
   local key="${STATE:?}/captain-approval.key" ref sig want
   while read -r ref sig; do
     [ -n "$ref" ] || continue
-    if [ -s "$key" ] && [ "$sig" = "$(captain_ask_approval_sig "$1" "$ref" "$key")" ]; then printf '%s\n' "$ref"; return 0; fi
+    if [[ $ref != "${3:-}"* ]]; then continue; fi
+    if { [[ $ref != route:* ]] || [ ! -e "$(jg_compat_marker "${JG_HOME:-}")" ]; } \
+      && [ -s "$key" ] && [ "$sig" = "$(captain_ask_approval_sig "$1" "$ref" "$key")" ]; then printf '%s\n' "$ref"; return 0; fi
     if want=$(captain_ask_parent_sig "$1" "$ref") && [ "$sig" = "$want" ]; then printf '%s\n' "$ref"; return 0; fi
-  done < <(printf '%s\n' "$2" | grep -Eo 'approved-by-captain: [A-Za-z0-9._:-]+ sig=[0-9a-f]{64}' | sed -E 's/^approved-by-captain: ([^ ]+) sig=/\1 /')
+  done < <(captain_ask_body "$2" | sed -nE 's/^approved-by-captain: ([A-Za-z0-9._:-]+) sig=([0-9a-f]{64})$/\1 \2/p')
   return 1
 }
 
@@ -257,9 +334,18 @@ captain_ask_on_report() {  # <ticket> <show-output>; prints "<harness> <model> <
 # Reads its rows with bin/jg-backlog-transition-lib.sh's jg_backlog_row_show over $DATA, which
 # bin/jg-spawn.sh and bin/jg-send.sh source; any row it cannot read is refused, never passed.
 guard_captain_ask_build() {  # <ticket>; refuses an unapproved build, else names its record on stderr
-  local show parent='' basis
+  local show parent='' basis filer
+  # shellcheck source=bin/jg-backlog-lib.sh
+  . "$SCRIPT_DIR/jg-backlog-lib.sh" || fail "cannot load backlog access to check build approval for $1"
   show=$(jg_backlog_row_show "$(jg_backlog_data_absolute "${DATA:?}")" "$1" --full) \
     || fail "cannot read $1 to check whether a build of it needs the captain's approval: $show"
+  captain_ask_route_guard "$1" "$show"
+  filer=$(captain_ask_filer "$1") || fail "cannot read the filer of $1 to check repair approval"
+  if captain_ask_repair_filer "$filer"; then
+    basis=$(captain_ask_repair_order) || fail "$1 needs the recorded standing approval on jg-m7h"
+    printf 'approval: %s starts on standing repair order %s\n' "$1" "$basis" >&2
+    return 0
+  fi
   captain_ask_build_gated "$show" || return 0
   if basis=$(captain_ask_build_basis "$1" "$show"); then
     printf 'approval: %s starts on %s\n' "$1" "$basis" >&2

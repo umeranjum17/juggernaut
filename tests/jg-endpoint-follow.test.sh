@@ -114,13 +114,23 @@ read_state() { # <case-dir> [extra env...]: the one-line crew-state answer
   shift
   env "$@" FAKE_WORLD="$d/world.json" JG_HOME="$d" JG_STATE_OVERRIDE="$d/state" "$CREW_STATE" "$ID" 2>/dev/null
 }
+read_state_cli() { # <case-dir> [crew state options...]: the public CLI's state text
+  local d=$1 result
+  shift
+  result=$(FAKE_WORLD="$d/world.json" JG_HOME="$d" JG_STATE_OVERRIDE="$d/state" \
+    "$ROOT/bin/jg" crew crew-state "$ID" "$@") || return
+  jq -er 'select(.ok) | .data.stdout' <<<"$result"
+}
 meta_of() { cat "$1/state/$ID.meta"; }
 
 # --- (a) the follow ---------------------------------------------------------
 d=$(new_case moved "account=pa_cognify")
 world "$d" "[$(pane_row w1:p4 "$ID" "$d/wt")]"
 before=$(meta_of "$d")
-out=$(read_state "$d")
+read_only=$(read_state_cli "$d" --read-only) || fail "jg crew crew-state --read-only failed"
+assert_contains "$read_only" "backend target gone" "read-only uses the recorded pane"
+assert_equals "$before" "$(meta_of "$d")" "read-only leaves the endpoint record untouched"
+out=$(read_state_cli "$d") || fail "jg crew crew-state failed"
 assert_contains "$out" "state: working" "the moved worker reads working through its new pane"
 assert_not_contains "$out" "backend target gone" "a followed worker is not reported gone"
 after=$(meta_of "$d")
@@ -138,7 +148,7 @@ ls "$d/state"/.meta-*.lock >/dev/null 2>&1 && fail "the record lock was left beh
 again=$(read_state "$d")
 assert_equals "$out" "$again" "a second read answers the same"
 assert_equals "$after" "$(meta_of "$d")" "a second read writes nothing"
-pass "a worker moved by muxr is followed: pane lines and pool account rebound, the rest untouched"
+pass "jg crew crew-state repairs a moved worker's endpoint, and --read-only leaves it untouched"
 
 # --- (a2) the name is the record's agent_name=, not the task id ---------------
 moved_name=$("$ROOT/bin/jg-herdr.sh" agent-name-for "$ID" "Fix the thing") || fail "the title-and-id name of $ID"

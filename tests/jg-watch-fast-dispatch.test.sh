@@ -126,10 +126,10 @@ t2_interval_holds() {
   touch "$d/state/.last-check"
   add_check "$d" auto-dispatch "$LOGGING \"$d/log/dispatch\""
   urgent_row "$d"
-  one_cycle "$d"
+  one_cycle "$d" JG_DISPATCH_INTERVAL=060
   wait_lines "$d/log/dispatch" 1 5 || fail "T2: the first cycle started no dispatch"
   sleep 10
-  one_cycle "$d"
+  one_cycle "$d" JG_DISPATCH_INTERVAL=060
   sleep 1
   assert_equals 1 "$(lines_of "$d/log/dispatch")" "T2: a second cycle inside the interval starts no second pass"
   pass "T2: two cycles 10 s apart run the dispatch stand-in once"
@@ -149,7 +149,7 @@ with open(d + "/export.jsonl", "w") as out:
                           "created_at": "2026-11-01T00:00:00Z", "labels": ["project:proj"], "metadata": {}}) + "\n")
 PY
   JG_HOME="$d" python3 "$ROOT/core/item-store/adapters/tickets.py" import --home main "$d/export.jsonl" > /dev/null || fail "the row did not import"
-  printf '#!/usr/bin/env bash\nexit 1\n' > "$d/hold"
+  printf '#!/usr/bin/env bash\necho "blocking-batch: ok"\n' > "$d/hold"
   chmod +x "$d/hold"
   printf '1\n' > "$d/config/lane-target"
   touch "$d/state/.last-watcher-beat"
@@ -253,6 +253,52 @@ t7_slow_dispatch_does_not_wait() {
   pass "T7: a slow dispatch pass does not hold the board-answers tick ($gap s between ticks)"
 }
 
+t8_new_check_advances_the_sweep() {
+  local d
+  d=$(new_home t8)
+  printf 'now check * *\n' > "$d/config/wake-routing"
+  touch "$d/state/.last-check"
+  add_check "$d" new-check "$LOGGING \"$d/log/check\"; echo 'new check found work'"
+  one_cycle "$d"
+  assert_equals 1 "$(lines_of "$d/log/check")" "T8: a changed registration makes the pass due before its timer"
+  assert_grep 'new check found work' "$d/state/.wake-queue" "T8: the new check queues its result"
+  pass 'T8: a new trusted registration starts a sweep before the repair timer'
+}
+
+t9_forge_reads_share_only_the_same_query() {
+  local d id repo number
+  d=$(new_home t9)
+  printf 'now check * *\n' > "$d/config/wake-routing"
+  while read -r id repo number; do
+    bash -c '
+      . "$1/bin/jg-pr-lib.sh"
+      url="https://github.com/$4/pull/$5"
+      printf "kind=ship\npr=%s\n" "$url" > "$2/$3.meta"
+      jg_pr_poll_prepare "$2" "$3" github "$url" github.com "$4" "$5" "$1/bin/jg-pr-poll.sh" &&
+        jg_pr_poll_publish_prepared
+    ' _ "$ROOT" "$d/state" "$id" "$repo" "$number" || fail "T9: could not arm $id"
+  done <<'ROWS'
+a-same example/one 10
+b-same example/one 10
+c-other-repo example/two 10
+d-other-query example/one 11
+ROWS
+  cat > "$d/fakebin/gh" <<SH
+#!/usr/bin/env bash
+[ "\$1 \$2 \$4 \$5 \$6 \$7" = 'pr view --json state -q .state' ] || exit 1
+printf '%s\n' "\$3" >> "$d/log/forge"
+printf 'OPEN\n'
+SH
+  chmod +x "$d/fakebin/gh"
+  add_check "$d" z-end "echo 'forge sweep finished'"
+  one_cycle "$d" GH_TOKEN=fixture-token
+  assert_equals 3 "$(lines_of "$d/log/forge")" "T9: one duplicate is reused and distinct queries are read"
+  jg_touch_epoch "$(($(date +%s) - 1200))" "$d/state/.last-check"
+  one_cycle "$d" JG_CHECK_INTERVAL=300 GH_TOKEN= GITHUB_TOKEN=
+  assert_equals 7 "$(lines_of "$d/log/forge")" "T9: without a pinned token each poll is independent"
+  pass 'T9: one sweep shares only identical GitHub queries with the same explicit credential'
+}
+
 t1_dispatch_starts_before_the_queue_exit
 t2_interval_holds
 t3_pass_line
@@ -260,3 +306,5 @@ t4_sweep_runs_dispatch_inline
 t5_overdue_sweep_runs_first
 t6_cursor
 t7_slow_dispatch_does_not_wait
+t8_new_check_advances_the_sweep
+t9_forge_reads_share_only_the_same_query

@@ -430,25 +430,32 @@ def cmd_read(a):
     return mine[1]
 
 
-def cmd_spawnable(a):
+def cmd_spawnable(with_filer):
+    sys.path.insert(0, os.path.dirname(STORE))
+    from workflows.kinds.critic import draft_ready
+
     h = home()
     con = open_tickets(h).con
+    con.create_function("critic_draft_ready", 2, lambda row, blocker: draft_ready(h, row, blocker))
     card = """(%s.issue_type = 'decision' OR coalesce(json_extract(%s.metadata, '$.kind'), '') = 'captain'
               OR instr(%s.title, '[design-ux]') > 0 OR EXISTS (SELECT 1 FROM json_each(%s.labels) WHERE value = 'design-ux'))"""
     c = lambda x: card % (x, x, x, x)
-    q = """SELECT t.id, j.value FROM ticket t JOIN json_each(t.labels) j ON j.value LIKE 'project:%%'
+    q = """SELECT t.id, j.value, t.created_by FROM ticket t JOIN json_each(t.labels) j ON j.value LIKE 'project:%%'
      WHERE t.home = ? AND t.status = 'open' AND t.ephemeral = 0 AND t.issue_type IS NOT 'gate' AND NOT %s
        AND (t.defer_until IS NULL OR t.defer_until <= ?)
        AND coalesce(t.assignee, '') = '' AND coalesce(json_extract(t.metadata, '$.hold_reason'), '') = ''
        AND NOT EXISTS (SELECT 1 FROM link l JOIN ticket b ON b.home = l.home AND b.id = l.to_id
-                        WHERE l.home = t.home AND l.from_id = t.id AND l.type = 'blocks' AND b.status IS NOT 'closed')
+                        WHERE l.home = t.home AND l.from_id = t.id AND l.type = 'blocks' AND b.status IS NOT 'closed'
+                          AND CASE WHEN json_extract(t.metadata, '$.wf_kind') = 'critic'
+                                   THEN NOT critic_draft_ready(t.id, b.id) ELSE 1 END)
        AND NOT EXISTS (SELECT 1 FROM link l JOIN ticket x ON x.home = l.home AND x.id = l.to_id
                         WHERE l.home = t.home AND l.from_id = t.id AND x.status IS NOT 'closed' AND %s)
        AND NOT EXISTS (SELECT 1 FROM link l JOIN ticket x ON x.home = l.home AND x.id = l.from_id
                         WHERE l.home = t.home AND l.to_id = t.id AND x.status IS NOT 'closed' AND %s)
      ORDER BY t.priority, t.created_at, t.id, j.value""" % (c("t"), c("x"), c("x"))
-    for i, label in con.execute(q, (itemdb.home_id(h), now_iso())):
-        print("%s\t%s" % (i, label))
+    for i, label, filer in con.execute(q, (itemdb.home_id(h), now_iso())):
+        origin = filer if filer and filer.isprintable() else ""
+        print("\t".join((i, label, origin) if with_filer else (i, label)))
     return 0
 
 
@@ -484,8 +491,8 @@ def main(argv):
             return cmd_read(type("A", (), dict(verb=rest[0], args=[x for x in rest[1:] if x != "--shadow"], shadow="--shadow" in rest)))
         if cmd in ("view", "list", "markdown", "questions"):
             return cmd_read(type("A", (), dict(verb=cmd, args=[x for x in rest if x != "--shadow"], shadow="--shadow" in rest)))
-        if cmd == "spawnable" and not rest:
-            return cmd_spawnable(None)
+        if cmd == "spawnable" and rest in ([], ["--with-filer"]):
+            return cmd_spawnable(bool(rest))
         if cmd == "tree":
             return cmd_tree(type("A", (), dict(args=[x for x in rest if x != "--shadow"])))
         if cmd == "ready" and (not rest or rest[0] == "--now"):

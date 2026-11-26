@@ -182,17 +182,39 @@ jg_wake_status_handle() { # <id> <relayed|classified> <reference|reason>
   jg_wake_status_save
 }
 
-# Classify every open outcome first presented before <cut> with one reason, in one pass over the journal.
+# The lanes among <json array of task names> that still owe a required next step (bin/jg-facts-lib.sh jg_fact_next_step is the one
+# definition): one line each, empty when none does.
+jg_wake_status_owed() { # <json array of task names>
+  local data=${JG_DATA_OVERRIDE:-$JG_HOME/data} task facts
+  while IFS= read -r task; do
+    [ -n "$task" ] || continue
+    facts=$(jg_fact_next_step "$STATE" "$data" "$task") || return 1
+    [ "$(jg_fact_val "$facts" step)" = none ] || jg_fact_next_step_text "$task" "$facts"
+  done < <(printf '%s' "$1" | jq -r '.[]')
+}
+
+# Classify every open outcome first presented before <cut> with one reason, in one pass over the journal. A sweep never hides finished
+# work that still owes a next step: it is refused whole (exit 3, nothing classified) and names each lane and its step. The same pass
+# lists the tasks that hold an open outcome in range, so the check reads the journal no more often than the classification does.
 jg_wake_status_classify_before() { # <cut epoch> <reason>
-  local cut=$1 reason=$2 out
+  local cut=$1 reason=$2 out rest owed
   case "$cut" in ''|*[!0-9]*) return 2 ;; esac
   [[ "$reason" = *[![:space:]]* ]] || return 2
   jg_wake_status_load || return 1
   out=$(printf '%s' "$JG_WAKE_STATUS_DATA" | jq -c --argjson cut "$cut" --arg r "$reason" '
     def open: (.kind | startswith("OUTCOME")) and .disposition == null and (.at // 0) < $cut;
     ([.[]?.events[]? | select(open)] | length),
+    [to_entries[] | select(any(.value.events[]?; open)) | .key],
     map_values(.events |= map(if open then .disposition = {kind: "classified", reference: $r} else . end))') || return 1
-  JG_WAKE_STATUS_DATA=${out#*$'\n'}
+  rest=${out#*$'\n'}
+  owed=$(jg_wake_status_owed "${rest%%$'\n'*}") || return 1
+  if [ -n "$owed" ]; then
+    printf 'wake drain: sweep refused; %d finished lane(s) in it still owe a required next step, and a sweep must not hide them:\n%s\n' \
+      "$(printf '%s\n' "$owed" | grep -c .)" "$owed" >&2
+    printf 'wake drain: take each step, then sweep again\n' >&2
+    return 3
+  fi
+  JG_WAKE_STATUS_DATA=${rest#*$'\n'}
   jg_wake_status_save || return 1
   printf 'wake drain: classified %s outcome(s) presented before %s\n' "${out%%$'\n'*}" "$cut"
 }

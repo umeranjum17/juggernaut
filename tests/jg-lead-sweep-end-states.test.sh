@@ -89,11 +89,13 @@ STUB
 chmod +x "$d/refuse-bus"
 echo 'REFUSED: retention needs repair' > "$FM/state/refuse-dirty"
 JG_BUS_BIN=$d/refuse-bus sweep
-check "e: failed repeated delivery exposes its real cause" "$(grep -c 'lab transport refused' "$d/out")" 1
-check "e: failed delivery leaves the original age and duty" "$(field "$dirty" state):$(field "$dirty" since)" open:100
+# A refused engine write still owes the wake in the durable outbox.
+check "e: an unavailable engine leaves the new reason in the outbox" "$(grep -c 'retention needs repair' "$FM/state/.wake-bus.outbox.jsonl")" 1
+check "e: the outage leaves the original age and duty" "$(field "$dirty" state):$(field "$dirty" since)" open:100
 sweep
-check "e: failed repeated delivery is retried" "$(grep -c 'retention needs repair' "$d/out")" 1
-check "e: retry delivers the new reason" "$(grep -c 'retention needs repair' "$FM/state/.wake-queue")" 1
+check "e: sweep does not raise a duplicate while the wake is owed" "$(grep -c 'retention needs repair' "$d/out" || true)" 0
+JG_HOME=$FM JG_STATE_OVERRIDE=$FM/state "$FM/bin/jg-wake-bus.sh" render >/dev/null
+check "e: recovery delivers the owed reason once" "$(grep -c 'retention needs repair' "$FM/state/.wake-queue")" 1
 rm "$FM/state/refuse-dirty"; : > "$FM/state/lost-dirty"; sweep
 check "f: lost slot remains an open obligation" "$(field "$dirty" state):$(field "$dirty" since)" open:100
 check "f: lost slot names repair and proof" "$(grep -c 'repair and prove reusable capacity' "$FM/data/lead-sweep/dirty-s1.capacity")" 1

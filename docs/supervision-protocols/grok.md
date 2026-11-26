@@ -1,8 +1,8 @@
 Mode: Grok background-notify supervision.
 
 When this session owns supervision and away mode is not active:
-1. Drain first with `bin/jg-wake-drain.sh`.
-   After handling all emitted wakes and reconciling open decisions and unread status lines, run the exact `--ack-through` command printed as `WAKE_ACK_REQUIRED`; until then the work remains durable for idempotent re-handling after interruption.
+1. Drain first with `jg radio drain`.
+   After handling all emitted wakes and reconciling open decisions and unread status lines, run `jg radio ack <ref>` with the reference from the drain; until then the work remains durable for idempotent re-handling after interruption.
 2. Source `__JG_X_MODE_ENV__` first when Relay is active.
 3. First cycle: arm with Grok's tracked background tool, as its own call:
 
@@ -18,11 +18,11 @@ When this session owns supervision and away mode is not active:
 8. Waiting is silent.
 9. Never use shell `&` for Juggernaut supervision.
 10. Never bundle the arm onto another command.
-    A shell `&`, a truncating pipe, or bundling is denied automatically by the PreToolUse seatbelt (`bin/jg-arm-pretool-check.sh`) whenever this project's Grok hooks are trusted.
+    A shell `&`, a truncating pipe, or bundling is denied automatically by the PreToolUse seatbelt (`script: bin/jg-arm-pretool-check.sh`) whenever this project's Grok hooks are trusted.
 
 Grok injects a synthetic user message with `synthetic_reason: task_completed` when the background arm completes.
 When you see a background-task-completed system reminder for the arm:
-1. Run `bin/jg-wake-drain.sh` first.
+1. Run `jg radio drain` first.
 2. Optionally fetch arm output with `get_command_or_subagent_output(<task_id>)` for the reason line.
 3. Handle `signal`, `stale`, `check`, or `heartbeat` using the harness-neutral contract in `AGENTS.md`.
 4. Ordinary wake: re-arm the next cycle with the same background `__JG_GROK_ARM__` call if the home still needs supervision, as `bin/jg-supervision-lib.sh` defines it.
@@ -31,7 +31,7 @@ When you see a background-task-completed system reminder for the arm:
    Re-arm attaches to an existing healthy cycle when one is already present and follows its verified successor chain.
    See [`watcher-continuity.md`](../watcher-continuity.md) for the arm-layer successor and clean-close failure contract.
 
-The primary project Stop hook runs `bin/jg-turnend-guard-grok.sh` as a backstop, not the normal wake path.
+The primary project Stop hook runs `script: bin/jg-turnend-guard-grok.sh` as a backstop, not the normal wake path.
 [`turnend-guard.md`](../turnend-guard.md) owns its running-payload capability selection between native same-process blocking and the pre-native bounded resume fallback.
 After any forced continuation, arm the watcher with the background protocol above.
 

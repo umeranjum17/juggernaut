@@ -88,6 +88,23 @@ test_a_post_always_writes_its_route() {
   pass "a card posted with jg-question-card.sh always writes its route file, for a task and for Main"
 }
 
+test_workflow_card_routes_without_a_lead() {
+  local d row=jg-plan card=wf-jg-plan-plan out rc=0
+  d=$(setup workflow)
+  jg_test_beads_home "$d/home"
+  jg_test_add "$d/home" "$row" '[feature] Approve faster sign in'
+  run "$d" "$ROOT/bin/jg-captain-hold.sh" hold "$row" --reason 'Plan approval for faster sign in' --must plan-approval >/dev/null \
+    || fail 'could not hold the workflow row'
+  mkdir -p "$d/home/state/workflow-cards"
+  printf '%s\t%s\tplan\t\t\ta-plan,b-plan\t%s\n' "$row" "$row" "$row" > "$d/home/state/workflow-cards/$card"
+  out=$(run "$d" "$BA" route-answer "$card" "$AT" a-plan) || fail "workflow answer was refused: $out"
+  assert_contains "$out" "routed: $card -> workflow" 'a marked card bypasses the lead lookup'
+  run "$d" "$BA" route-answer no-marker "$AT" a-plan >/dev/null || rc=$?
+  assert_equals 3 "$rc" 'an unmarked card still reaches the usual unrouted result'
+  pass 'a workflow card routes without a lead'
+}
+
 test_unrouted_answer_reaches_the_task_its_card_names
 test_a_card_no_task_names_still_wakes_main
 test_a_post_always_writes_its_route
+test_workflow_card_routes_without_a_lead

@@ -21,7 +21,8 @@
 # ids must first be handled with --outcome ID --relayed REFERENCE or
 # --outcome ID --classified REASON (nonblank, recorded per actor and home);
 # --outcomes-before EPOCH --classified REASON classifies, in one locked pass, every
-# open outcome first presented before EPOCH (bin/jg-wake-status-lib.sh owns the rule).
+# open outcome first presented before EPOCH (bin/jg-wake-status-lib.sh owns the rule), and is refused whole, exit 3, while any
+# finished Recon or critic lane in that range still owes a next step (bin/jg-facts-lib.sh jg_fact_next_step names it).
 # CAPTAIN NOTES lead every presentation, and they gate the acknowledgement:
 # bin/jg-captain-note-lib.sh owns what counts as an unhandled captain inbox
 # note, lists every one of them at the top of this drain, and refuses an
@@ -71,6 +72,8 @@ SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd
 . "$SCRIPT_DIR/jg-supervision-engine-lib.sh"
 # shellcheck source=bin/jg-afk-contract.sh
 . "$SCRIPT_DIR/jg-afk-contract.sh"
+# shellcheck source=bin/jg-facts-lib.sh
+. "$SCRIPT_DIR/jg-facts-lib.sh"
 # shellcheck source=bin/jg-wake-status-lib.sh
 . "$SCRIPT_DIR/jg-wake-status-lib.sh"
 # shellcheck source=bin/jg-captain-note-lib.sh
@@ -273,7 +276,7 @@ case "${1:-}" in
     outcome_rc=0
     jg_wake_status_classify_before "$2" "$4" || outcome_rc=$?
     jg_lock_release "$STATE/.status-presentation-lock"
-    [ "$outcome_rc" -eq 0 ] || echo 'wake drain: bulk classification failed; use a whole-second epoch and a nonblank reason' >&2
+    [ "$outcome_rc" -eq 0 ] || [ "$outcome_rc" -eq 3 ] || echo 'wake drain: bulk classification failed; use a whole-second epoch and a nonblank reason' >&2
     exit "$outcome_rc"
     ;;
   --ack-through)
@@ -1270,6 +1273,8 @@ if [ -n "$ACK_THROUGH" ]; then
   elif [ "$RECOVERY_ACK_MOVED" = true ]; then
     printf 'wake drain: acknowledged wakes through %s (%s row(s) consumed), but a newer recovery episode is pending; re-run bin/jg-wake-drain.sh and use the new WAKE_ACK_REQUIRED command\n' \
       "$ACK_THROUGH" "$ACK_REMOVED" >&2
+  elif [ "$ACTOR" = main ] && { [ "$ACK_REMOVED" -gt 0 ] || [ -n "$PAGES_ACK_ARG" ]; }; then
+    printf '%s\n' 'WAKE_DRAIN_AGAIN: run bin/jg-wake-drain.sh before ending this turn. Handle and acknowledge any further work it presents.' >&2
   fi
   exit 0
 fi

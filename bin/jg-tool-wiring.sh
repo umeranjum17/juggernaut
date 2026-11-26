@@ -95,7 +95,7 @@ install_skill() {  # <package-skill-dir> <skill-name>
 }
 
 # The package ships its home integration under the name of the product it was
-# published for: `juggernaut`, or `firstmate` (done-done-axi 0.6.27, the pin).
+# published for: `juggernaut` or the earlier name `firstmate`.
 integration_dir() {  # <package-dir>
   local name
   for name in juggernaut firstmate; do

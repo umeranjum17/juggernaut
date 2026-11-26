@@ -68,7 +68,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
-CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 # shellcheck source=bin/jg-question-lib.sh
 . "$SCRIPT_DIR/jg-question-lib.sh"
 # shellcheck source=bin/jg-board-record-lib.sh
@@ -76,8 +75,7 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 
 ROUTES=$DATA/answer-route
 BACKLOG=$SCRIPT_DIR/jg-backlog.sh
-BRIEF=$SCRIPT_DIR/jg-brief.sh
-PROJECT_MODE=$SCRIPT_DIR/jg-project-mode.sh
+WORKER_START=$SCRIPT_DIR/jg-worker-start.sh
 HOLD=$SCRIPT_DIR/jg-captain-hold.sh
 
 die() { printf 'jg-answer-route: %s\n' "$1" >&2; exit "${2:-1}"; }
@@ -294,28 +292,6 @@ write_task_sections() {  # <task-file> <spec-file> <option-text> <answer> <at> <
   } > "$2"
 }
 
-# Fill the scaffold's placeholders, keeping every other line of the brief as jg-brief.sh wrote it.
-fill_brief() {  # <brief> <task-file> <spec-file>
-  awk -v tf="$2" -v sf="$3" '
-    function slurp(p,   s, l) { s = ""; while ((getline l < p) > 0) s = s l "\n"; close(p); return s }
-    $0 == "{TASK}" { printf "%s", slurp(tf); next }
-    $0 == "{JUGGERNAUT_SPEC}" { printf "%s", slurp(sf); next }
-    { print }
-  ' "$1" > "$1.answer-route.tmp" && mv -f -- "$1.answer-route.tmp" "$1"
-}
-
-# This home's route for an approved ordinary implementation plan: the rule config/crew-
-# dispatch.json states, else the config's default, else the one route the fleet reads.
-route_of_home() {  # -> "<harness> <model> <effort>", or nothing when the config names none
-  local file=$CONFIG/crew-dispatch.json rule
-  [ -f "$file" ] || return 0
-  rule=$(jq -c '
-    ((.rules // []) | map(select((.when // "") | test("approved ordinary implementation plan"; "i")))) as $r
-    | if ($r | length) > 0 then $r[0].use else (.default // {}) end' "$file" 2>/dev/null)
-  [ -n "$rule" ] || return 0
-  printf '%s' "$rule" | jq -r '[.harness // empty, .model // empty, (.effort // "medium")] | join(" ")' 2>/dev/null
-}
-
 # The project an option's ticket belongs to: the call ticket's own registry line, else the
 # only project this home has. Empty means the router cannot tell, which is a supervisor step.
 project_of() {  # <call>
@@ -326,22 +302,17 @@ project_of() {  # <call>
   fi
 }
 
-# Take a worker's end: file the ticket, write its brief, approve it for the dispatch check.
+# Take a worker's end: file the ticket, write its brief, approve it for the dispatch check (bin/jg-worker-start.sh).
 # Prints the command's own line and sets START_DETAIL; every step's refusal is the end's cause,
 # never a silent start.
 start_worker() {  # <card-key> <value> <option-text> <answer> <at> <source> <call>
   local key=$1 value=$2 text=$3 answer=$4 at=$5 source=$6 call=$7
-  local project id title body task spec mode route harness model effort out rc=0
+  local project id title body task spec out rc=0
   START_DETAIL=''
   project=$(project_of "$call")
   [ -n "$project" ] || { START_DETAIL="no project to file it against"; return 1; }
   title=$(title_of "$text")
   [ -n "$title" ] || { START_DETAIL="the option's text gives no readable ticket title"; return 1; }
-  mode=$("$PROJECT_MODE" "$project" 2>/dev/null | awk '{ print $1 }')
-  [ -n "$mode" ] || { START_DETAIL="the project's registered delivery mode could not be read"; return 1; }
-  route=$(route_of_home)
-  [ -n "$route" ] || { START_DETAIL="this home's dispatch config names no route"; return 1; }
-  read -r harness model effort <<< "$route"
   id=$(printf '%s-%s' "$key" "$value" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-' | sed -E 's/-+/-/g; s/-+$//' | cut -c1-40)
   body=$(mktemp "${TMPDIR:-/tmp}/jg-answer-route-body.XXXXXX") || { START_DETAIL="cannot stage the ticket body"; return 1; }
   task=$(mktemp "${TMPDIR:-/tmp}/jg-answer-route-task.XXXXXX") \
@@ -349,30 +320,13 @@ start_worker() {  # <card-key> <value> <option-text> <answer> <at> <source> <cal
   spec=$(mktemp "${TMPDIR:-/tmp}/jg-answer-route-spec.XXXXXX") \
     || { rm -f -- "$body" "$task"; START_DETAIL="cannot stage the brief's spec section"; return 1; }
   write_body "$body" "$call" "$key" "$value" "$text" "$answer" "$at" "$source"
-  if ! out=$(JG_HOME="$JG_HOME" "$BACKLOG" add "$id" "$title" --kind ship --repo "$project" --priority 2 \
-    --body-file "$body" 2>&1); then
-    START_DETAIL="the ticket was refused: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"
-    rc=1
-  elif ! out=$(JG_HOME="$JG_HOME" "$BRIEF" "$id" "$project" --mode "$mode" --ticket "$id" 2>&1); then
-    START_DETAIL="the brief was not written: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"
-    rc=1
-  elif [ ! -s "$DATA/$id/brief.md" ]; then
-    START_DETAIL="the brief was not written at data/$id/brief.md"
-    rc=1
+  write_task_sections "$task" "$spec" "$text" "$answer" "$at" "$source" "$call" "$key"
+  if out=$(JG_HOME="$JG_HOME" "$WORKER_START" "$id" "$title" "$project" --body-file "$body" --task-file "$task" --spec-file "$spec" 2>&1); then
+    START_DETAIL=$out
+    printf 'start %s [%s]: ticket %s, brief data/%s/brief.md, approved %s\n' "$key" "$value" "$id" "$id" "${out#"$id" on }"
   else
-    write_task_sections "$task" "$spec" "$text" "$answer" "$at" "$source" "$call" "$key"
-    if ! fill_brief "$DATA/$id/brief.md" "$task" "$spec"; then
-      START_DETAIL="the brief's Task sections were not filled"
-      rc=1
-    elif ! out=$(JG_HOME="$JG_HOME" "$BACKLOG" approve-dispatch "$id" --harness "$harness" \
-      --model "$model" --effort "$effort" 2>&1); then
-      START_DETAIL="the start was not approved: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"
-      rc=1
-    else
-      START_DETAIL="$id on $harness $model $effort"
-      printf 'start %s [%s]: ticket %s, brief data/%s/brief.md, approved %s %s %s\n' \
-        "$key" "$value" "$id" "$id" "$harness" "$model" "$effort"
-    fi
+    START_DETAIL=$out
+    rc=1
   fi
   rm -f -- "$body" "$task" "$spec"
   return "$rc"

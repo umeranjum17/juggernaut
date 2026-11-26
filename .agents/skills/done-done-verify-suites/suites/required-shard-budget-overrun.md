@@ -1,3 +1,6 @@
 # Required shard budget overrun
 
+Host-wide admission: run `done-done run -- bash journeys/required-shard-retry.sh` to exercise [the host admission library](../../../../bin/jg-test-host-lib.sh) through the real [test runner](../../../../bin/jg-test-run.sh).
+The journey proves two verification runs from separate homes and a lane test reach a peak of two active workloads with a two-token pool, and killing a holder lets a queued run proceed.
+
 Required shard budget overrun: run `done-done run required-shard-retry` (which runs `bash tests/jg-test-run.test.sh` and `bash tests/jg-trunk-verify.test.sh`); the real `bin/jg-test-run.sh --required-shards` gates throwaway repositories with a 2000 ms shard budget and proves shards over their budget with no failed test run every script and pass with one overrun warning each, naming the host load, while a shard with a failed test stays red and runs once, and a shard that stops before it writes its result (eight shards dying at selection on an unmapped `bin/` file) leaves a failed result naming the shard and the cause, never a missing file in the aggregate; the real `bin/jg-trunk.sh verify` over a gate replaying trunk-v3 at 20eb94ae6054 moves the green pin, prints one warning and keeps one machine-load row per shard, and a failed test over the budget holds the pin (screen: none).

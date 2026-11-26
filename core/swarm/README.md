@@ -16,6 +16,13 @@ In Main, each line once:
 
 In an armed home, once: `swarm <plan>: <owner> restored its dispatch switch to <value>`. A finished swarm puts back the switch it found.
 
+The check in Main raises a P1 that names the lane and its owner when a worker's open blocker is more than ten minutes old.
+It uses the blocker's recorded time when present and starts timing an unstamped blocker on the first observation.
+The same lane keeps one alert until its blocker closes or the lane lands.
+
+When a lead claims a handled steer with `bin/jg-delivery.sh`, the command records the action and evidence for each lane named in the message and assigned to that lead's swarms.
+The records stay under the lead's `state/swarm-actions/`, even for a steer delivered from Main's inbox.
+
 ## What the word-row upkeep does
 
 - A lead takes the owner's pick from Main. When Main's card is answered, the lead runs `design-pick` with his words, and the slice starts with no model turn.

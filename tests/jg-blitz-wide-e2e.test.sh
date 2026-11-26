@@ -34,6 +34,7 @@ T1_BOUND=${JG_BLITZ_T1_BOUND:-90}; [ "$LIVE" != 1 ] || T1_BOUND=${JG_BLITZ_T1_BO
 STEP_DELAY_T2=${JG_BLITZ_T2_STEP_DELAY:-6}
 T=$(jg_test_tmproot jg-blitz-wide) || fail "no temp root"
 T=$(cd "$T" && pwd -P)
+jg_test_isolate_treehouse "$T"
 jg_git_identity blitz blitz@example.com
 # Nothing here reaches a home, a pool or a terminal of the machine it runs on: the homes and the pools are under $T, and the terminal is
 # a stand-in, or in the live mode a tmux server of its own.
@@ -131,7 +132,7 @@ world_env() {  # <world dir>
   {
     printf 'export JG_WORKER_POOL_DIR=%q JG_BLITZ_LEASE_LOG=%q JG_SPAWN_PHASE_LOG=%q PATH=%q JG_BLITZ_TERM=%q JG_SPAWN_NO_GUARD=1 JG_TEST_FIXTURE_PROC=%q\n' \
       "$JG_WORKER_POOL_DIR" "$JG_BLITZ_LEASE_LOG" "$JG_SPAWN_PHASE_LOG" "$PATH" "$JG_BLITZ_TERM" "$$"
-    printf 'export JG_BACKEND=tmux\n'
+    printf 'export JG_BACKEND=tmux GIT_CEILING_DIRECTORIES=%q\nunset TREEHOUSE_ROOT\n' "$GIT_CEILING_DIRECTORIES"
     if [ "$LIVE" = 1 ]; then printf 'export TMUX_TMPDIR=%q\nunset TMUX\n' "$LAB_TMUX_DIR"   # the normal HOME and login stay as they are
     else printf 'export HOME=%q XDG_DATA_HOME=%q XDG_CONFIG_HOME=%q CLAUDE_CONFIG_DIR= TMUX=fake,1,0\n' "$HOME" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME"; fi
   } > "$ENV_FILE"

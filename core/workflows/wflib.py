@@ -13,10 +13,12 @@ KINDS = {
     "owner": (("plan-approval",), "plan-approval"),
     "fanout": ((), None),
     "war-room": (("fast", "full"), "fast"),
+    "muster": (("survey", "light", "full", "complete"), "full"),
 }
 REPORTS = {"recon", "critic", "war-room"}  # steps that end in a report the owner has not yet approved a build from
 BUILDS = {"worker", "fanout"}
 PLAN_SOURCES = {"recon(standard)", "recon(deep)", "war-room"}  # what a critic reads and a fanout starts from
+FANOUT_SOURCES = PLAN_SOURCES | {"muster(light)", "muster(full)", "muster(complete)"}
 RESERVED = set(KINDS) | {"goal", "custom", "off", "limit", "angles", "pick"}
 BY = ("owner", "main", "lead")
 NAME = re.compile(r"^[a-z][a-z0-9-]*$")
@@ -252,13 +254,19 @@ def check(stages, limits, reads=True):
         refuse(f"{total} steps; the limit is {limits['steps']}; raise it with the line `limit steps: {total}` in {HOME_FILE}")
     for s, row in enumerate(stages):
         for k, a, n in row:
-            if reads and k in ("critic", "fanout") and nearest(stages, s, PLAN_SOURCES) is None:
-                refuse(f"a {k} needs a recon(standard|deep) or war-room in an earlier stage "
+            sources = FANOUT_SOURCES if k == "fanout" else PLAN_SOURCES
+            if reads and k in ("critic", "fanout") and nearest(stages, s, sources) is None:
+                choices = " or muster" if k == "fanout" else ""
+                refuse(f"a {k} needs a recon(standard|deep) or war-room{choices} in an earlier stage "
                        f"({'nothing to critique' if k == 'critic' else 'no slice plan to start'})")
             if k in BUILDS:
                 last = max((j for j in range(s) if any(x[0] in REPORTS for x in stages[j])), default=None)
                 if last is not None and not any(x[0] == "owner" for j in range(last + 1, s) for x in stages[j]):
                     refuse(f"a {k} after a Recon needs owner(plan-approval) between (owner rule 2026-11-05)")
+                if k == "fanout":
+                    muster = nearest(stages, s, {"muster"})
+                    if muster is not None and not any(x[0] == "owner" for j in range(muster + 1, s) for x in stages[j]):
+                        refuse("a fanout after Muster needs owner(plan-approval) between")
 
 
 def parse(spec_or_name, by="main", config=None, block=False):

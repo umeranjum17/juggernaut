@@ -33,7 +33,7 @@
 #   jg-captain-hold.sh verify <origin-id>
 #   jg-captain-hold.sh answered <task-id>
 #   jg-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
-#   jg-captain-hold.sh blocking <task-id>
+#   jg-captain-hold.sh blocking (<task-id> | --batch)   (--batch reads task ids on stdin from one store read)
 #   jg-captain-hold.sh design-card <card-key> --raised-by <ticket> --title <question>
 #   jg-captain-hold.sh design-pick <card-key> --words <the captain's words>
 #   jg-captain-hold.sh to-gates   (the pass that moves each old stamped owner hold to a gate, prints the count; a second run moves none)
@@ -395,7 +395,12 @@ CAPTAIN_META_LOCK=
 CAPTAIN_META_LOCK_HELD=0
 CAPTAIN_CONTROL_LOCK=
 CAPTAIN_CONTROL_LOCK_HELD=0
+CAPTAIN_BATCH_TMP=
 captain_hold_cleanup() {
+  if [ -n "${CAPTAIN_BATCH_TMP:-}" ]; then
+    rm -rf -- "$CAPTAIN_BATCH_TMP" || true
+    CAPTAIN_BATCH_TMP=
+  fi
   if [ "$CAPTAIN_META_LOCK_HELD" = 1 ]; then
     jg_lock_release "$CAPTAIN_META_LOCK" || true
     CAPTAIN_META_LOCK_HELD=0
@@ -971,8 +976,21 @@ reply_release() {  # <task-id> <title> <card-key>
 # the question closes too (--release leaves it open and lifts a date it was deferred to). An exact retry finishes
 # what the first call left undone; a different answer to an answered question is refused.
 write_gate_approval() {  # <task-id> <show-output>
-  local id=$1 line body tmp
-  line=$(captain_ask_approval_line "$id" "answer:$DECISION_DIGEST")
+  local id=$1 line body tmp signer=${JG_CAPTAIN_HOLD_SIGNER_HOME:-}
+  if [ -n "$signer" ]; then
+    # The answer still owns the lead's row and locks. Only signing runs in the parent home.
+    # shellcheck source=bin/jg-squad-lead-parent-lib.sh
+    . "$SCRIPT_DIR/jg-squad-lead-parent-lib.sh"
+    jg_squad_lead_parent_record_parse "$(jg_compat_parent_marker "$JG_HOME")" \
+      && [ "$JG_SQUAD_LEAD_PARENT_ROUTE" = local ] && [ "$JG_SQUAD_LEAD_PARENT_HOME" = "$signer" ] \
+      || fail "the requested signer is not this home's local parent"
+    line=$(JG_HOME="$signer" STATE="$signer/state" bash -c \
+      'fail() { echo "$*" >&2; exit 1; }; . "$1" && captain_ask_approval_line "$2" "$3"' \
+      _ "$signer/bin/jg-captain-ask-lib.sh" "$id" "answer:$DECISION_DIGEST") \
+      || fail "the local parent could not sign the approval for $id"
+  else
+    line=$(captain_ask_approval_line "$id" "answer:$DECISION_DIGEST")
+  fi
   body=$(decode_shown_value "$(show_field "$2" body)") || fail "could not decode the body of $id"
   case "$body" in *"$line"*) return 0 ;; esac
   tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-body.XXXXXX") || fail "cannot stage the approval for $id"
@@ -1836,9 +1854,80 @@ linked_open_decisions() {  # <task-id>; prints the open decisions linked to it, 
   done <<<"$mine"
 }
 
-command_blocking() {  # <task-id>
+command_blocking_batch() {  # stdin: task ids, one per line
+  local data id tmp ids_file raw_file err_file rc=0 kind cand target title
+  local -A open_design=() seen_design=()
+  data=$(jg_backlog_data_absolute "$DATA") \
+    || { printf 'jg-captain-hold: data directory cannot be resolved: %s\n' "$DATA" >&2; exit 2; }
+  if ! jg_backlog_source_present "$data" "$DATA"; then
+    printf 'jg-captain-hold: %s\n' "${JG_BACKLOG_TRANSITION_ERROR:-backlog source not authorized}" >&2
+    exit 2
+  fi
+  tmp=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/jg-captain-hold-batch.XXXXXX") \
+    || { printf 'jg-captain-hold: cannot create scratch directory\n' >&2; exit 2; }
+  CAPTAIN_BATCH_TMP=$tmp
+  ids_file=$tmp/ids
+  raw_file=$tmp/raw
+  err_file=$tmp/err
+  : > "$ids_file"
+  while IFS= read -r id || [ -n "$id" ]; do
+    id=${id%$'\r'}
+    [ -n "$id" ] || continue
+    case "$id" in
+      *[!A-Za-z0-9._-]*)
+        printf 'jg-captain-hold: task id must be a non-empty privacy-safe slug: %s\n' "$id" >&2
+        exit 2
+        ;;
+    esac
+    printf '%s\n' "$id" >> "$ids_file"
+  done
+  if [ ! -s "$ids_file" ]; then
+    printf 'blocking-batch: ok\n'
+    return 0
+  fi
+  backlog_cmd blocking-batch "$ids_file" > "$raw_file" 2> "$err_file" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf 'jg-captain-hold: %s\n' "$(head -n 1 "$err_file" 2>/dev/null || echo 'blocking-batch read failed')" >&2
+    exit 2
+  fi
+  if grep -q '^maybe	' "$raw_file"; then
+    while IFS=$'\t' read -r kind cand target title; do
+      [ "$kind" = maybe ] && [ -n "$target" ] || continue
+      [ -z "${seen_design[$target]+x}" ] || continue
+      seen_design[$target]=1
+      if ! task_show "$target"; then
+        printf 'jg-captain-hold: task %s could not be read\n' "$target" >&2
+        exit 2
+      fi
+      if ! captain_ask_build_approved "$target" "$TASK_SHOW_OUTPUT"; then
+        open_design[$target]=1
+      fi
+    done < "$raw_file"
+  fi
+  printf 'blocking-batch: ok\n'
+  if [ "${#open_design[@]}" -gt 0 ]; then
+    while IFS=$'\t' read -r kind cand target title; do
+      case "$kind" in
+        blocker) printf '%s\t%s\t%s\n' "$cand" "$target" "$title" ;;
+        maybe) [ -z "${open_design[$target]+x}" ] || printf '%s\t%s\t%s\n' "$cand" "$target" "$title" ;;
+      esac
+    done < "$raw_file" | LC_ALL=C sort -u
+  else
+    while IFS=$'\t' read -r kind cand target title; do
+      [ "$kind" = blocker ] || continue
+      printf '%s\t%s\t%s\n' "$cand" "$target" "$title"
+    done < "$raw_file"
+  fi
+  return 0
+}
+
+command_blocking() {  # <task-id> | --batch
   local id=${1:-} status=0 target blockers n=0
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+  if [ "$id" = --batch ]; then
+    command_blocking_batch
+    return $?
+  fi
   (command_open "$id" --distinguish-absent) || status=$?
   case "$status" in
     0) blockers=$id ;;

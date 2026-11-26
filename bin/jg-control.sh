@@ -176,6 +176,8 @@
 #   JG_CONTROL_EXIT_WAIT         alive->dead wait after the exit command (30)
 #   JG_CONTROL_LAUNCH_WAIT       dead->alive wait after a relaunch (90)
 #   JG_CONTROL_EXIT_RETRIES      Enter retries for the exit command (3)
+#   JG_CONTROL_EXPECT_EXITED_GEN  automatic task relaunch only: require this
+#                                 spawn generation and never stop a live agent
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -439,6 +441,10 @@ if [ ! -f "$META" ]; then
       ;;
   esac
   die "no task '$ID' in $STATE (jg-control resolves an exact task id only)"
+fi
+if [ -n "${JG_CONTROL_EXPECT_EXITED_GEN:-}" ]; then
+  [ "$VERB" = relaunch ] && [ "$(jg_meta_get "$META" spawn_gen)" = "$JG_CONTROL_EXPECT_EXITED_GEN" ] \
+    || die "automatic relaunch refused: task $ID changed since its agent was observed to have exited"
 fi
 
 # A remotely placed squad_lead records its endpoint on ANOTHER host, so every
@@ -869,11 +875,14 @@ clear_composer() {
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
-  local state cmd hazard verdict composer_state cancel absence submit_retries=$EXIT_RETRIES interrupt_result=not-needed dialog
+  local state cmd hazard verdict composer_state cancel absence submit_retries=$EXIT_RETRIES interrupt_result=not-needed dialog screen
   require_state_verified_backend exit
   state=$(agent_state)
   case "$state" in
     dead)
+      if [ -n "${JG_CONTROL_EXPECT_EXITED_GEN:-}" ] && [ "$BACKEND" = herdr ]; then
+        jg_backend_agent_exited "$BACKEND" "$T" || die "automatic relaunch refused: task $ID's agent exit is unproven"
+      fi
       printf 'already-stopped'
       return 0
       ;;
@@ -900,6 +909,9 @@ do_exit() {
           # no agent - a herdr pane whose session server was merely stopped is
           # the common case. Nothing is gone, so this is the ordinary
           # already-stopped outcome.
+          if [ -n "${JG_CONTROL_EXPECT_EXITED_GEN:-}" ] && [ "$BACKEND" = herdr ]; then
+            jg_backend_agent_exited "$BACKEND" "$T" || die "automatic relaunch refused: task $ID's agent exit is unproven"
+          fi
           printf 'already-stopped'
           return 0
           ;;
@@ -914,6 +926,7 @@ do_exit() {
       ;;
     *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to send a lifecycle command into an unattributed endpoint" ;;
   esac
+  [ -z "${JG_CONTROL_EXPECT_EXITED_GEN:-}" ] || die "automatic relaunch refused: task $ID still has an agent"
   # A previous guarded exit may already have opened the supported modal.
   local confirmation_rc=0
   complete_exit_confirmation || confirmation_rc=$?
@@ -973,6 +986,11 @@ do_exit() {
   if [ -s "${JG_COMPOSER_DIALOG_SINK:-}" ]; then
     dialog=$(cat "$JG_COMPOSER_DIALOG_SINK")
     refuse_blocking_prompt "$dialog"
+  fi
+  if [ "$HARNESS" = agy ] && [ "$composer_state" = unknown ] \
+     && screen=$(jg_backend_visible_capture "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
+     && jg_composer_agy_idle_empty "$screen" && [ "$(agent_state)" = alive ]; then
+    composer_state=empty
   fi
   # The refusal names the working recovery so the next operator clears or
   # submits the pending text instead of looping on interrupt: Enter submits it
@@ -1372,6 +1390,12 @@ do_relaunch() {
   local -a spawn_args
 
   require_state_verified_backend relaunch
+  if [ -n "${JG_CONTROL_EXPECT_EXITED_GEN:-}" ]; then
+    case "$(agent_state)" in
+      dead|missing) ;;
+      *) die "automatic relaunch refused: task $ID's agent is not known to have exited" ;;
+    esac
+  fi
   resolve_relaunch_profile
 
   case "$KIND" in

@@ -31,7 +31,7 @@ Each registry entry stays concise and single-line: the summary is one sentence n
 Natural-language summary and `scope:` text may contain parentheses and semicolons; keep the generated `(home: ...; scope: ...; projects: ...; added ...)` suffix intact so operational consumers resolve its explicit field markers.
 The `home:` path points to the seeded home containing `data/charter.md`; no extra registry pointer field is needed.
 For a remote route, `host:` is an OpenSSH config alias and `root:` is that host's separate tracked Juggernaut code root.
-A remote Squad Lead agent always runs on the Herdr backend and every seed, launch, and liveness relaunch first gates its host on `bin/jg-remote-doctor.sh` readiness, so an unready host refuses with that doctor's own gap text rather than half-creating a route; the workers that Squad Lead supervises keep the home's ordinary backend selection.
+script: A remote Squad Lead agent always runs on the Herdr backend and every seed, launch, and liveness relaunch first gates its host on `bin/jg-remote-doctor.sh` readiness, so an unready host refuses with that doctor's own gap text rather than half-creating a route; the workers that Squad Lead supervises keep the home's ordinary backend selection.
 This release places whole Squad Lead homes remotely and never individual workers.
 [`docs/remote-squad-leads.md`](../../../docs/remote-squad-leads.md) owns current operator setup and transport behavior.
 The home-seeded `data/charter.md` is the sole owner of boilerplate idle-by-default behavior, the normal delegation lifecycle, and standard escalation contracts, so point to that charter rather than restating those contracts in the registry entry.
@@ -60,13 +60,13 @@ Preserve the generated charter sections unless the domain genuinely needs a hard
 Provision a local persistent home and registry entry after the charter is filled:
 
 ```sh
-bin/jg-home-seed.sh <id> <home|-> {<project>...|--no-projects}
+jg home home-seed create <id> <home|-> {<project>...|--no-projects}
 ```
 
 Provision a whole remote home through its configured SSH host with:
 
 ```sh
-bin/jg-remote-home-seed.sh <id> <ssh-alias> <remote-root> <remote-home> {<project>[=<origin-url>]...|--no-projects}
+jg home remote-home-seed <id> <ssh-alias> <remote-root> <remote-home> {<project>[=<origin-url>]...|--no-projects}
 ```
 
 You resolve each project's origin yourself - from the captain, the project registry, a clone that exists elsewhere, `gh-axi`, or an explicit paste - and name it as `<project>=<origin-url>`; the seed validates and transports what you supply.
@@ -80,11 +80,11 @@ The lease survives with no live process and is never recycled by later `treehous
 The slot stays reserved across restarts until the lease is released.
 Release happens only on explicit retirement or seed rollback, never on routine restart or recovery.
 
-`bin/jg-home-seed.sh` copies the charter into the Squad Lead home as `data/charter.md`.
+script: `bin/jg-home-seed.sh` copies the charter into the Squad Lead home as `data/charter.md`.
 It also writes the gitignored `.jg-squad-lead-parent` durable binding before the required `.jg-squad-lead-home` identity marker; the parser header in [`bin/jg-squad-lead-parent-lib.sh`](../../../bin/jg-squad-lead-parent-lib.sh) owns the record contract, and both files must remain in place.
-`bin/jg-spawn.sh --squad-lead` uses the mate-specific profile resolved by `bin/jg-harness.sh squad lead <id>`, with model and effort exposed by `squad-lead-model <id>` and `squad-lead-effort <id>`.
+`jg crew spawn --squad-lead` uses the mate-specific profile resolved by `jg crew harness squad_lead <id>`, with model and effort exposed by `squad-lead-model <id>` and `squad-lead-effort <id>`.
 The per-mate pin, global fallback, schema, and refusal contract are owned by [`docs/configuration.md`](../../../docs/configuration.md#choose-the-squad-lead-harness).
-For a `--squad-lead` spawn, `bin/jg-spawn.sh` populates `MODEL`/`EFFORT` from those tokens only when the harness itself came from the Squad Lead config path for that spawn.
+script: For a `--squad-lead` spawn, `bin/jg-spawn.sh` populates `MODEL`/`EFFORT` from those tokens only when the harness itself came from the Squad Lead config path for that spawn.
 For a local route, an explicit per-spawn `--harness` flag, positional harness arg, or raw launch command starts clean on model and effort too, unless the caller also passes explicit `--model` or `--effort`.
 A remote route accepts only a verified harness adapter and refuses a raw launch command at the host boundary.
 When the file's tokens do apply, an explicit per-spawn `--model` or `--effort` flag always wins over the file's token for that axis.
@@ -128,7 +128,7 @@ Keep every `data/learnings.md` fully local by captain decision; route fleet-gene
 No AGENTS.md reread nudge is needed at spawn or respawn because the agent reads instructions fresh on launch; only the bootstrap sweep's running-home instruction-surface advance needs that AGENTS.md re-read.
 Bootstrap reports successful AGENTS.md re-read sends as `BOOTSTRAP_INFO:` and only emits `NUDGE_SQUAD LEADS:` when that send fails and needs retry.
 A separate, literal-content config reread is required whenever inherited `config/*` material changes under an already-running Squad Lead.
-For a local home, after each successful allowlisted config write, both the locked bootstrap convergence path and mid-session `bin/jg-config-push.sh` use the shared propagation report to build one per-home generation-specific private instruction file from the validated destination post-write bytes for only the declared config items that actually changed for that home, in declaration order.
+script: For a local home, after each successful allowlisted config write, both the locked bootstrap convergence path and mid-session `bin/jg-config-push.sh` use the shared propagation report to build one per-home generation-specific private instruction file from the validated destination post-write bytes for only the declared config items that actually changed for that home, in declaration order.
 Each changed path is printed with clear begin/end delimiters and the destination file's full exact new bytes unparsed, or the explicit token `ABSENT` when propagation removed the destination copy.
 The instruction uses only minimal framing that these are defaults/rules and do not remove judgment; it never includes SHA values, selected profiles, parsed summaries, or any other generated interpretation.
 `data/captain-shared.md` is not a config file and is never inlined into this instruction file or message.
@@ -144,12 +144,12 @@ The parent records that nudge before delivery, retains it after a failed send, a
 It does not receive a pointer to a primary-local generation path that cannot exist on that host.
 Inherited harness and runtime-backend defaults must not harden `jg-spawn` to reject a deliberate runtime choice that differs from those defaults.
 The [worker launch environment contract](../../../docs/configuration.md#worker-launch-environment-configlaunch-env-allowlist) separately governs explicit environment grants.
-For already-live Squad Leads, use `bin/jg-config-push.sh` to push a mid-session inherited local-material change without running the tracked-file fast-forward.
+For already-live Squad Leads, use `jg land config-push` to push a mid-session inherited local-material change without running the tracked-file fast-forward.
 It uses the same live-home discovery and propagation helper as bootstrap, reports each item as `pushed`, `unchanged`, `skipped`, or `error`, and follows the config-reread contract above for changed or pending generations.
-`bin/jg-home-seed.sh` refuses to copy a missing or placeholder charter.
+script: `bin/jg-home-seed.sh` refuses to copy a missing or placeholder charter.
 
 Direct seed without a preexisting brief requires `JG_SQUAD LEAD_CHARTER`.
-Run `bin/jg-home-seed.sh validate` when checking registry integrity; its header owns the complete validation and refusal mechanics.
+Run `jg home home-seed validate` when checking registry integrity; its header owns the complete validation and refusal mechanics.
 
 Seeding is transactional.
 If validation, cloning, or registry update fails, generated briefs, new homes, new project clones, and registry edits are rolled back.
@@ -182,18 +182,18 @@ Treat an inherited queue that carries plans with no matching delivery record as 
 Apply `fleet-records`' work-items-only backlog contract before creation or handoff.
 When a Squad Lead is created for a domain, existing main-backlog items that fall under its scope should become its work instead of staying stranded in the main backlog.
 Scope-matching is Juggernaut's judgment against the Squad Lead's natural-language scope, not a keyword rule.
-Read `bin/jg-backlog.sh list`, pick queued items that fit the new scope, and move them with:
+Read `jg ticket backlog list`, pick queued items that fit the new scope, and move them with:
 
 ```sh
-bin/jg-backlog-handoff.sh <squad-lead-id> <item-key>...
+jg ticket backlog-handoff <squad-lead-id> <item-key>...
 ```
 
 After seeding, run this handoff for the new Squad Lead's in-scope queued items.
 For an existing or inherited domain, complete record intake first so no already-shipped plan row is handed off as open work.
-For a local route, the helper resolves and validates the Squad Lead home from `data/squad_leads.md`, then delegates the item move to `bin/jg-backlog.sh`, which moves each named item - and a whole connected set, blocker plus dependents, atomically - from the main home's Beads store into the Squad Lead home's.
+script: For a local route, the helper resolves and validates the Squad Lead home from `data/squad_leads.md`, then delegates the item move to `bin/jg-backlog.sh`, which moves each named item - and a whole connected set, blocker plus dependents, atomically - from the main home's Beads store into the Squad Lead home's.
 For a remote route, the same helper first moves the dependency-closed set atomically from the main backlog into `data/handoff/<id>.outbox.md`, then transfers that backlog-format outbox through `jg-on.sh` and lets the remote home's `jg-backlog-receive.sh` move every not-already-present key under the destination lock.
 After a new local placement or a remote outbox receipt becomes durable, the helper attempts one marked routed-work instruction through the receiving Squad Lead's recorded endpoint.
-[`bin/jg-backlog-handoff.sh`](../../../bin/jg-backlog-handoff.sh) owns route-specific wake outcomes, remote outbox release after durable receipt, and stable wake-correlation retry behavior.
+script: [`bin/jg-backlog-handoff.sh`](../../../bin/jg-backlog-handoff.sh) owns route-specific wake outcomes, remote outbox release after durable receipt, and stable wake-correlation retry behavior.
 There is no two-phase handoff journal and no extra backlog release step.
 Bootstrap retries pending outboxes and wakes when mutation is authorized and emits `SQUAD LEAD_HANDOFF:` for any outboxes that remain.
 It moves each queued item's whole block - the `- [ ] <id> ...` header plus every following two-or-more-space-indented body line and blank separator, up to the next item or column-0 section heading - byte-exact under the same section, treating an indented `## ...` line as body rather than a section boundary, so neither the header nor its body is duplicated or orphaned.
@@ -211,7 +211,7 @@ Do not hand off `local-only` items.
 For local `kind=squad_lead` meta with no window, treat the Squad Lead as a dead persistent direct report and respawn it with:
 
 ```sh
-bin/jg-spawn.sh <id> --squad-lead
+jg crew spawn <id> --squad-lead
 ```
 
 Use the recorded `home=` in meta.
@@ -220,13 +220,13 @@ For a remote route, the same command probes and relaunches only on the configure
 An SSH transport failure or unreadable remote endpoint remains unknown and must be reconciled on that host; never launch a local replacement.
 `stuck-operator-recovery`'s remote Squad Lead note owns why the endpoint-dead and send-failed verdicts that seem to justify this are themselves unreliable.
 Respawn re-resolves the Squad Lead harness from current config, uses the same guarded pre-launch sync, and re-propagates inherited local material, so recovered Squad Leads converge inherited config items and shared captain preferences whenever their home validates; tracked-file sync remains guarded separately.
-If the Squad Lead is already running and only inherited local material changed, prefer `bin/jg-config-push.sh` over respawning.
-To move a live LOCAL Squad Lead onto a newly pinned harness, model, or effort without a full recovery, set its per-mate pin documented in [`docs/configuration.md`](../../../docs/configuration.md#choose-the-squad-lead-harness) and then relaunch it with `bin/jg-control.sh <id> relaunch`, which re-resolves that pin, stops the agent, and launches the replacement in the same home ([`docs/agent-control.md`](../../../docs/agent-control.md)).
+If the Squad Lead is already running and only inherited local material changed, prefer `jg land config-push` over respawning.
+To move a live LOCAL Squad Lead onto a newly pinned harness, model, or effort without a full recovery, set its per-mate pin documented in [`docs/configuration.md`](../../../docs/configuration.md#choose-the-squad-lead-harness) and then relaunch it with `jg crew control relaunch <id>`, which re-resolves that pin, stops the agent, and launches the replacement in the same home ([`docs/agent-control.md`](../../../docs/agent-control.md)).
 That plane refuses a remotely placed Squad Lead by name, because its agent runs on another host where none of the plane's postconditions can be read.
-Move a REMOTE one with `bin/jg-remote-squad-lead-relaunch.sh <id> <harness> <model|default|-> <effort|default|->`, which runs that same control-plane relaunch on its host and then republishes this primary's own route metadata from the identity the host confirmed; pass the profile explicitly and use `default` for an absent pin, because neither the global nor the per-mate Squad Lead pin is inherited and any copy on that host belongs to a different home ([`docs/remote-squad-leads.md`](../../../docs/remote-squad-leads.md)).
+Move a REMOTE one with `jg crew remote-squad-lead-relaunch <id> <harness> <model|default|-> <effort|default|->`, which runs that same control-plane relaunch on its host and then republishes this primary's own route metadata from the identity the host confirmed; pass the profile explicitly and use `default` for an absent pin, because neither the global nor the per-mate Squad Lead pin is inherited and any copy on that host belongs to a different home ([`docs/remote-squad-leads.md`](../../../docs/remote-squad-leads.md)).
 Never call `jg-remote-squad-lead-control.sh relaunch` through `jg-on.sh` directly for this: it leaves this primary's own record naming the runtime the mate used to run.
-A successful update restarts every live mate of both placements on its own, including one already on the target commit; the `/resupply` skill owns that pass, and `bin/jg-squad-lead-restart.sh` owns its persist gate and failure vocabulary.
-A local mate with no startable work, no worker, no open request and no queued message is stopped and marked dormant instead of relaunched (`bin/jg-squad-lead-dormant.sh stop-idle`), so no model session is spent on an idle replacement.
+script: A successful update restarts every live mate of both placements on its own, including one already on the target commit; the `/resupply` skill owns that pass, and `bin/jg-squad-lead-restart.sh` owns its persist gate and failure vocabulary.
+A local mate with no startable work, no worker, no open request and no queued message is stopped and marked dormant instead of relaunched (`jg home squad-lead-dormant stop-idle`), so no model session is spent on an idle replacement.
 Its first routed message starts it on the new code.
 
 Do not reconstruct a Squad Lead's whole tree from the main home.
@@ -239,7 +239,7 @@ It never initiates a survey or audit during recovery.
 
 A Squad Lead is persistent by default.
 An empty queue is healthy and does not trigger teardown.
-Run `bin/jg-teardown.sh <id>` for `kind=squad_lead` only when the captain or main Juggernaut explicitly decides to retire that persistent Squad Lead.
+Run `jg crew teardown <id>` for `kind=squad_lead` only when the captain or main Juggernaut explicitly decides to retire that persistent Squad Lead.
 
 The safety check is the Squad Lead's own home.
 Teardown refuses while its `state/*.meta` contains in-flight work.
@@ -257,7 +257,7 @@ It refuses retirement while that cleanup is uncertain or unavailable, preserving
 Raw deletion is unsupported because a blocking process-event child can outlive its home.
 
 With `--force`, teardown is the explicit discard path.
-The worktree-slot ownership contract in `bin/jg-teardown.sh` still applies: `--force` never authorizes returning a descendant pool slot that another task may own.
+script: The worktree-slot ownership contract in `bin/jg-teardown.sh` still applies: `--force` never authorizes returning a descendant pool slot that another task may own.
 It kills child windows, discards child work and state inside the Squad Lead home, removes the route, releases the lease, and removes the retired Squad Lead home.
 If forced teardown contends with a fresh task publication in any affected home, one command refuses without publishing or removing task state; treat that refusal as terminal and inspect the other operation before retrying.
 `jg-spawn.sh --relaunch` and non-forced teardown remain outside that task-set serialization; [`jg-squad-lead-liveness-lib.sh`'s header](../../../bin/jg-squad-lead-liveness-lib.sh) owns automatic recovery serialization.

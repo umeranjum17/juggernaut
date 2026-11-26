@@ -3,14 +3,14 @@
 #
 # Usage: jg-lease-tick.sh <jg-home>
 #
-# One step of the delivery tick (bin/jg-delivery-tick.sh), which the home's watcher runs every 30 s and the host sentinel every 60 s, so a
+# One step of the delivery tick (bin/jg-delivery-tick.sh), which the watcher and sentinel run when due, so a
 # worker stays live on the board while the watcher is down. For each task record with a `ticket=` and an `agent_name=` whose agent is alive
 # it sends `jg-backlog.sh beat <ticket>` as the agent name once 120 s have passed since the record's last beat (the mtime of
-# state/<task>.beat; no file reads as never). A lease is 300 s, so three tries fall inside it. It reads no lease first: that read costs as
+# state/<task>.beat; no file reads as never). A lease is 300 s. It reads no lease first: that read costs as
 # much as the beat. At most 20 beats go out in one pass, the longest-waiting first, so more live workers than one pass serves are all served
 # within a few passes and none starves.
 # A beat that bd refuses because the row is not in progress (a hold, a date) is a wait, not a fault: the file is touched, no line is printed,
-# and the next beat comes 120 s later, which takes a new lease once the hold is over. A beat that fails is printed once and tried at the
+# and the next beat is eligible after 120 s, which takes a new lease once the hold is over. A beat that fails is printed once and tried at the
 # next tick, as is a row another name owns.
 # The tick relaunches nothing and reclaims no lane: a record keeps its row when its pane is gone, done or not, and recovery of that lane stays
 # with the supervisor (`bin/jg-control.sh relaunch`) and the sentinel's own relaunch. The one reclaim is a row in progress whose lease is

@@ -39,6 +39,7 @@
 # `bin/jg-trunk.sh autorelease`: once CI required is green on the pushed pin, main fast-forwards to it and the next trunk version is cut; a red
 # or a refusal is reported once in the outbox, and a wait is silent (docs/trunk-flow.md).
 # A landed task resumes the lanes whose blocker says `waits-for: <task>`: one steer each, the blocker closed in the same send.
+# ticket-trail.sh closes its ticket from the landing receipt and retries a stranded close on later checks.
 # A landed task is then cleaned up with bin/jg-teardown.sh, never forced, in the same step that landed it and per lane: a stack's
 # output is read as it comes, and each lane is cleaned at its own `landed` line. A refusal that only needs time is retried at 15 s, 1, 2
 # and 5 minutes; any other refusal is final with its reason from core/machines/cleanup-reason.states and one alert (cleanup-retry.sh).
@@ -70,6 +71,7 @@ case "${1:-}" in
 esac
 [ -d "$2/state" ] || { echo "trunk-landing: $2 has no state directory" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
+LANDING_COMMAND=$1
 STATE=$FMH/state
 DATA_DIR=$FMH/data
 MEM=$FMH/data/jg-trunk-landing
@@ -154,16 +156,24 @@ kick_dispatch() {
 # A lane the lander reports landed: cleaned up at once, never forced (cleanup-retry.sh), its waiters resumed, one outbox line.
 # The lander rebased the lane, so its branch may now be at another head: the same state stands for that head.
 landed_lane() {  # <task-id> <head> <outbox text after the id and mode>
-  local id=$1 head=$2 proj br now res lane_mode
+  local id=$1 head=$2 proj br now res lane_mode ticket commit receipt_ticket
   proj=$(mval "$STATE/$id.meta" project); lane_mode=$(mval "$STATE/$id.meta" mode)
+  ticket=$(trail_ticket "$id")
   store_landed "$id" "$head"
   br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
   now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
   [ "$now" != "$head" ] || now=
   res=$(lane_cleanup "$id" "$head" "$now"); rm -f -- "$STATE/$id.land-next"
+  if IFS=$'\t' read -r _ _ commit receipt_ticket < <(trail_landing_receipts "$id" "$(basename "$proj")"); then
+    [ "$receipt_ticket" = - ] || ticket=$receipt_ticket
+    if trail_close_landed "$id" "$(basename "$proj")" "$commit" "$ticket"; then
+      DISPATCH_KICK_DUE=1
+      [ "$LANDING_COMMAND" != check ] || kick_dispatch
+    fi
+  fi
   window_move "$(basename "$proj")" landed >/dev/null || :
   resume_waiters "$id"
-  DISPATCH_KICK_DUE=1
+  case $LANDING_COMMAND in run|runbatch) DISPATCH_KICK_DUE=1 ;; esac
   cleanup_outbox "landed $id ($lane_mode) $3; $res"
 }
 
@@ -376,10 +386,6 @@ jg_trunk_in_use_migrate "$FMH/data" "$FMH/state"
 QUIET=; [ "$1" != next ] || QUIET=1
 # A policy number, or its default when the home's value is not a whole number.
 polnum() { local v; v=$(jg_trunk_policy "$1" "$2"); case $v in ''|*[!0-9]*) v=$3 ;; esac; printf '%s\n' "$v"; }
-if [ -z "$QUIET" ] && jg_lock_try_acquire "$MEM/.outbox.lock"; then
-  if [ -s "$MEM/outbox" ]; then mv -f -- "$MEM/outbox" "$MEM/outbox.$$" && cat "$MEM/outbox.$$" && rm -f -- "$MEM/outbox.$$"; fi
-  jg_lock_release "$MEM/.outbox.lock"
-fi
 # The landing's temporary output (request and launch logs) and the leftovers of a task with no record are removed
 # (core/tmp-reaper/records.sh landing, at most every 10 minutes and silent).
 [ -n "$QUIET" ] || [ ! -x "${SELF%/*}/../tmp-reaper/records.sh" ] || "${SELF%/*}/../tmp-reaper/records.sh" landing "$FMH" >/dev/null 2>&1 || :
@@ -395,6 +401,16 @@ local_trunk() {
     || LOCAL_TRUNK[$pn]=$(jg_delivery_style_is "$(JG_HOME="$FMH" "$FMH/bin/jg-project-mode.sh" --raw "$pn" 2>/dev/null | cut -d' ' -f1)" trunk && echo yes || echo no)
   [ "${LOCAL_TRUNK[$pn]}" = yes ]
 }
+if [ -z "$QUIET" ]; then
+  if trail_repair_tickets; then
+    DISPATCH_KICK_DUE=1
+    kick_dispatch
+  fi
+  if jg_lock_try_acquire "$MEM/.outbox.lock"; then
+    if [ -s "$MEM/outbox" ]; then mv -f -- "$MEM/outbox" "$MEM/outbox.$$" && cat "$MEM/outbox.$$" && rm -f -- "$MEM/outbox.$$"; fi
+    jg_lock_release "$MEM/.outbox.lock"
+  fi
+fi
 # Initialize only registered projects without a recorded trunk; init itself refuses an existing branch.
 for proj in "$FMH"/projects/*; do
   [ -d "$proj" ] && local_trunk "$proj" || continue

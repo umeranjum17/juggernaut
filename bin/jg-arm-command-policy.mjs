@@ -44,7 +44,7 @@ function parseArguments(argv) {
 }
 
 function rawMentionsProtected(command) {
-  return /(?:^|[/\s'"`(])jg-watch(?:-(?:arm|checkpoint))?\.sh\b/.test(normalizeLineContinuations(command));
+  return /(?:^|[/\s'"`(])(?:jg-watch(?:-(?:arm|checkpoint))?\.sh\b|jg\s+radio\s+watch-arm\b)/.test(normalizeLineContinuations(command));
 }
 
 function rawMentionsBroadKill(command) {
@@ -830,10 +830,11 @@ function analyzeProgram(command, context, depth = 0) {
     }
 
     const executable = position.command?.value || "";
-    const protectedKind = protectedIdentity(executable, context.root);
-    if (hasUnclassifiableProtectedExpansion(position.command, context.root)) unclassifiableProtected = true;
     const commandName = basename(executable);
     const args = position.words.slice(position.index + 1);
+    const armRoute = commandName === "jg" && args[0]?.value === "radio" && args[1]?.value === "watch-arm";
+    const protectedKind = armRoute ? "arm" : protectedIdentity(executable, context.root);
+    if (hasUnclassifiableProtectedExpansion(position.command, context.root)) unclassifiableProtected = true;
     if (commandName === "pkill" && args.some((word) => /jg-watch/.test(word.value) || wordReferencesAny(word, nodeContext.watcherPatterns))) broadKill = true;
     if (commandName === "kill" && (nodePgrepWatcher || args.some((word) => wordReferencesAny(word, nodeContext.watcherPids)))) broadKill = true;
     if (isWatcherPgrep(position, nodeContext)) pgrepWatcher = true;

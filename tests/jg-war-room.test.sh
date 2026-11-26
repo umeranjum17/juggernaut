@@ -68,6 +68,11 @@ children() {  # <council> -> the ids of its children
 # T1: three angles at once.
 council=jg-wrc
 jg_test_add "$HOME_DIR" "$council" "[feature] War room council"
+war_room "$council" "alpha,bravo,gamma"
+expect_code 2 "$rc" "unread depth must refuse: $out"
+assert_contains "$out" "jg muster depth record --ticket $council" "review tells Main how to record the depth"
+assert_equals "" "$(children "$council")" "review files no lanes"
+JG_HOME="$HOME_DIR" "$ROOT/bin/jg-muster-depth.sh" record --ticket "$council" --depth skip --reason "fixture startup" >/dev/null || fail "record skip"
 t1_start=$(date +%s)
 war_room "$council" "alpha,bravo,gamma"
 t1_took=$(( $(date +%s) - t1_start ))
@@ -111,6 +116,7 @@ pass "T2 a second run files nothing, starts nothing and reports already live"
 # T3: one lane's spawn is refused.
 council3=jg-wrd
 jg_test_add "$HOME_DIR" "$council3" "[feature] War room refusal"
+JG_HOME="$HOME_DIR" "$ROOT/bin/jg-muster-depth.sh" record --ticket "$council3" --depth skip --reason "fixture startup" >/dev/null || fail "record skip"
 printf 'gamma\n' > "$W/refuse-angle"
 war_room "$council3" "alpha,bravo,gamma"
 rm -f "$W/refuse-angle"

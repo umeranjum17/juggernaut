@@ -41,7 +41,7 @@ Only the operator may opt the primary home in; follow the [Juggernaut role schem
 
 ### One-task contribution consent (bounded)
 
-When the captain explicitly approves one specific upstream contribution, record it on that task only: `--upstream-consent <host>/<owner>/<repo>` on `bin/jg-brief.sh`, `bin/jg-spawn.sh`, and `bin/jg-promote.sh`.
+When the captain explicitly approves one specific upstream contribution, record it on that task only: `--upstream-consent <host>/<owner>/<repo>` on `bin/jg-brief.sh`, `jg crew spawn`, and `bin/jg-promote.sh`.
 Consent renders as an `upstream-consent=` token on the brief's `Delivery contract:` line, is recorded in `state/<id>.meta`, and a relaunch reuses the recorded value.
 It changes the home's persistent role in no way; the next task is gated fresh.
 The captain's approval must be a current explicit instruction naming the contribution - never an inference from the task resembling maintainer work.
@@ -51,7 +51,7 @@ The captain's approval must be a current explicit instruction naming the contrib
 The gate is code, not memory: `bin/jg-role-lib.sh`'s `jg_role_gate_self_publish` applies the [lineage and publication-target policy](../../../docs/configuration.md#juggernaut-role-configjuggernaut-role) to publishing contracts.
 
 - `bin/jg-brief.sh --project <dir>` refuses to scaffold a publishing ship brief the home cannot authorize.
-- `bin/jg-spawn.sh` refuses to launch a ship task on this repository without a maintainer scope or matching task consent, and refuses a brief whose `upstream-consent=` disagrees with the flag.
+- `jg crew spawn` refuses to launch a ship task on this repository without a maintainer scope or matching task consent, and refuses a brief whose `upstream-consent=` disagrees with the flag.
 - `bin/jg-promote.sh` applies the same gate to Recon promotion so the in-place path grants no more than a fresh spawn.
 - `local-only` publishes nothing, so it never needs authority and never takes consent.
 

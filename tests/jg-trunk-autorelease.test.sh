@@ -64,7 +64,7 @@ SH
 }
 origin_main() { git --git-dir="$W/origin.git" rev-parse refs/heads/main; }
 ci_rows() { awk -F'\t' -v c="$PIN" -v r="$1" '$2 == c && $4 == r { n++ } END { print n + 0 }' < <(cat "$HOME_D/data/trunk-ci.tsv" 2>/dev/null); }
-tickets() { grep -c 'ci-red-proj' "$W/backlog-calls" 2>/dev/null || true; }
+tickets() { grep -c '^add ci-red-release-proj-' "$W/backlog-calls" 2>/dev/null || true; }
 
 test_green_fast_forwards_main_and_cuts_the_next_trunk() {
   local out
@@ -86,13 +86,19 @@ test_green_fast_forwards_main_and_cuts_the_next_trunk() {
 test_red_keeps_main_and_files_one_ticket() {
   local out
   world_released red
+  repair_fixture
   printf 'red\n' > "$W/ci-required"
   out=$(trunk autorelease "$PROJ" 2>&1) || fail "T2: a red must not fail the step: $out"
   assert_contains "$out" "autorelease: RED" "T2: the red must be named"
   [ "$(origin_main)" != "$PIN" ] || fail "T2: main must stay"
   [ "$(ci_rows red)" = 1 ] || fail "T2: one red row"
   [ "$(tickets)" = 1 ] || fail "T2: one fix ticket, got $(tickets)"
+  await_repair_lane "ci-red-release-proj-${PIN:0:12}"
   trunk autorelease "$PROJ" >/dev/null 2>&1 || fail "T2: a second run must not fail"
+  printf '#!/usr/bin/env bash\necho "REQUIRED CHECK: CI required (FAILURE)"\n' > "$HOME_D/bin/jg-pr-state.sh"
+  chmod +x "$HOME_D/bin/jg-pr-state.sh"
+  out=$(PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-release/ci-watch.sh" check "$HOME_D" 2>&1) || fail "T2: the other release observer must exit cleanly"
+  [ -z "$out" ] && [ "$(wc -l < "$W/spawn-calls")" = 1 ] || fail "T2: the other release observer must not start another repair: $out"
   [ "$(ci_rows red)" = 1 ] && [ "$(tickets)" = 1 ] || fail "T2: a second run must record and file nothing more"
   git -C "$PROJ" rev-parse --verify -q refs/heads/release/v2 >/dev/null && fail "T2: no next trunk on a red"
   pass 'T2 a red leaves main alone, records the red once and files one fix ticket'

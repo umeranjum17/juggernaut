@@ -1,0 +1,643 @@
+{
+  "area": "outside channels",
+  "owner": "e6relay2",
+  "entries": [
+    {
+      "path": [
+        "relay",
+        "procevent-when",
+        "arm"
+      ],
+      "meaning": "Register a condition and action as a watch.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent-when.sh arm <name> [--interval <seconds>] [--stable <n>] [--deadline <seconds>] [--condition-timeout <seconds>] [--action-timeout <seconds>] [--error-budget <n>] --condition <condition-argv>... --action <action-argv>...",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent-when.arm.v1",
+      "script": "bin/jg-procevent-when.sh",
+      "operation": "arm",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent-when",
+        "classify"
+      ],
+      "meaning": "Classify a watch result.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent-when.sh classify <result-file>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent-when.classify.v1",
+      "script": "bin/jg-procevent-when.sh",
+      "operation": "classify",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent-when",
+        "terminal"
+      ],
+      "meaning": "Check whether a watch result is terminal.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent-when.sh terminal <result-file>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent-when.terminal.v1",
+      "script": "bin/jg-procevent-when.sh",
+      "operation": "terminal",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent-when",
+        "source-id"
+      ],
+      "meaning": "Find a watch source ID.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent-when.sh source-id <name>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent-when.source-id.v1",
+      "script": "bin/jg-procevent-when.sh",
+      "operation": "source-id",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent-when",
+        "retire"
+      ],
+      "meaning": "Retire a watch.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent-when.sh retire <name>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent-when.retire.v1",
+      "script": "bin/jg-procevent-when.sh",
+      "operation": "retire",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent-when",
+        "rebind-all"
+      ],
+      "meaning": "Refresh trust bindings for eligible watches.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent-when.sh rebind-all",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent-when.rebind-all.v1",
+      "script": "bin/jg-procevent-when.sh",
+      "operation": "rebind-all",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent-when",
+        "run"
+      ],
+      "meaning": "Run a registered watch.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent-when.sh run <source-id>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent-when.run.v1",
+      "script": "bin/jg-procevent-when.sh",
+      "operation": "run",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "register"
+      ],
+      "meaning": "Register a process-event source.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh register <adapter> <source-id> -- <argv>...",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.register.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "register",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "register-task"
+      ],
+      "meaning": "Register a task-owned process-event source.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh register-task <adapter> <source-id> <task-id> -- <argv>...",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.register-task.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "register-task",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "register-extension"
+      ],
+      "meaning": "Register an extension process-event source.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh register-extension <adapter> <source-id> --config-ref <reference>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.register-extension.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "register-extension",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "start"
+      ],
+      "meaning": "Run a process-event source.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh start <source-id>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.start.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "start",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "ensure-listening"
+      ],
+      "meaning": "Ensure a source has a listener.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh ensure-listening <source-id>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.ensure-listening.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "ensure-listening",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "reconcile"
+      ],
+      "meaning": "Reconcile process-event sources.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh reconcile",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.reconcile.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "reconcile",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "classify"
+      ],
+      "meaning": "Classify a captured process-event result.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh classify <result-file>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.classify.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "classify",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "handled"
+      ],
+      "meaning": "Acknowledge a captured process-event result.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh handled <source-id> <sequence>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.handled.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "handled",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "retire"
+      ],
+      "meaning": "Retire a process-event source.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh retire <source-id> [--if-absent|--if-matches <adapter> -- <argv>...|--if-owner <registration-token>]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.retire.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "retire",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "sweep-home"
+      ],
+      "meaning": "Retire all process-event sources in a home.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh sweep-home [--preflight]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.sweep-home.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "sweep-home",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "binding-retirement-preflight"
+      ],
+      "meaning": "Check whether an extension binding can retire.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh binding-retirement-preflight <binding-digest>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.binding-retirement-preflight.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "binding-retirement-preflight",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "extension-retirement"
+      ],
+      "meaning": "Retire or transfer an extension binding.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh extension-retirement <binding|transfer> <retirement-arguments...>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.extension-retirement.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "extension-retirement",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "extension-bind"
+      ],
+      "meaning": "Bind or receive an extension binding.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh extension-bind <bind|receive-transfer-bind> <binding-arguments...>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.extension-bind.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "extension-bind",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "extension-process-event"
+      ],
+      "meaning": "Handle an extension process event.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh extension-process-event <process-event-arguments...>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.extension-process-event.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "extension-process-event",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "procevent",
+        "list"
+      ],
+      "meaning": "List process-event sources.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-procevent.sh list",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "relay.procevent.list.v1",
+      "script": "bin/jg-procevent.sh",
+      "operation": "list",
+      "aliases": [],
+      "review_note": "A populated home refreshes state/procevent/.owner-lease when listed; therefore this operation writes."
+    }
+  ],
+  "dropped": [
+    {
+      "script": "bin/jg-procevent.sh",
+      "operation": "0",
+      "reason": "Not an operation: the script rejects this numeric command as unknown.",
+      "run": "jg-procevent.sh 0"
+    },
+    {
+      "script": "bin/jg-procevent.sh",
+      "operation": "1",
+      "reason": "Not an operation: the script rejects this numeric command as unknown.",
+      "run": "jg-procevent.sh 1"
+    },
+    {
+      "script": "bin/jg-procevent.sh",
+      "operation": "2",
+      "reason": "Not an operation: the script rejects this numeric command as unknown.",
+      "run": "jg-procevent.sh 2"
+    }
+  ]
+}

@@ -1675,14 +1675,27 @@ host_owns_the_only_cycle() {  # <home>
   [ "$arms" = "$arm $host" ]
 }
 
+# True once the park's own arm is the only arm of <home> and follows the live
+# watcher <watcher>, which still holds the lock: the cycle a take-over adopted.
+host_follows_the_only_cycle() {  # <home> <watcher>
+  local home=$1 watcher=$2 host arms
+  host=$(awk -F '\t' '$1 == "host" { print $2; exit }' "$home/state/.supervision-host" 2>/dev/null)
+  [ -n "$host" ] && kill -0 "$watcher" 2>/dev/null || return 1
+  [ "$(cat "$home/state/.watch.lock/pid" 2>/dev/null)" = "$watcher" ] || return 1
+  arms=$(home_arms "$home")
+  [ "$(printf '%s\n' "$arms" | grep -c .)" -eq 1 ] || return 1
+  [ "${arms#* }" = "$host" ]
+}
+
 # The live leak (2026-10-01): a main-only pass-through leaves its successor
 # cycle running through main's handling turn, and the next park - here a
 # restarted session's first turn end - attached to that cycle instead of
 # owning it. The successor arm, orphaned by its host's exit, kept owning the
 # watcher while the new park's arm polled it until the park boundary, hours
-# later. The next park now takes that cycle over: one arm, the host's own
-# child, owns the watcher, nothing reaches main for the takeover, no downtime
-# episode is opened, and the cycle it owns still delivers the next close.
+# later. The next park now takes that cycle over without stopping it: the left
+# arm hands the cycle over and exits, one arm, the host's own child, follows
+# the same watcher, nothing reaches main for the takeover, no downtime episode
+# is opened, and the adopted cycle still delivers the next close.
 # A main-only pass-through in <home> leaves its successor cycle running, main
 # handles and acknowledges the close, and the session restarts. Sets
 # LEFT_WATCHER and LEFT_ARM to the successor watcher and the arm that owns it.
@@ -1720,13 +1733,15 @@ test_next_park_takes_over_the_cycle_a_pass_through_left_for_main() {
   left_watcher=$LEFT_WATCHER
   left_arm=$LEFT_ARM
   turn_end "$home"
-  wait_until 150 host_owns_the_only_cycle "$home" \
-    || fail "takeover: the next park did not own the home's only watcher cycle (left arm $left_arm, watcher $left_watcher):"$'\n'"$(home_arms "$home")"$'\n'"$(cat "$home/state/.supervision-host.log")"
+  wait_until 150 host_follows_the_only_cycle "$home" "$left_watcher" \
+    || fail "takeover: the next park did not adopt the home's only watcher cycle (left arm $left_arm, watcher $left_watcher):"$'\n'"$(home_arms "$home")"$'\n'"$(cat "$home/state/.supervision-host.log")"
   ! kill -0 "$left_arm" 2>/dev/null || fail "takeover: the successor arm a pass-through left still runs (pid $left_arm)"
-  ! kill -0 "$left_watcher" 2>/dev/null || fail "takeover: the successor watcher still runs (pid $left_watcher)"
+  wait_until 50 grep -Eq "	reason=handed-over	.*	successor=attached:$left_watcher" "$home/state/.watch-cycle-exits.log" \
+    || fail "takeover: the left arm did not record handing its cycle over: $(cat "$home/state/.watch-cycle-exits.log")"
+  assert_no_re '	reason=(taken-over|signal-exit)' "$home/state/.watch-cycle-exits.log" "takeover: the takeover stopped a cycle"
   sleep 2
   ! hook_exited "$home" || fail "takeover: the takeover woke main: $(cat "$home/hook.err")"
-  host_owns_the_only_cycle "$home" || fail "takeover: the park did not keep the cycle it took over"
+  host_follows_the_only_cycle "$home" "$left_watcher" || fail "takeover: the park did not keep the cycle it took over"
   assert_re '^acked:' "$home/state/.watcher-down" "takeover: the takeover opened a downtime episode"
   assert_no_re 'rearm-resurface' "$home/state/.supervision-host.log" "takeover: the takeover resurfaced a recovery to main"
   append_status "$home" 'which region?' needs-decision
@@ -1736,38 +1751,30 @@ test_next_park_takes_over_the_cycle_a_pass_through_left_for_main() {
   pass "host+hook: the next park takes over the cycle a main-only pass-through left, so one arm owns it"
 }
 
-# A park stopped before its take-over stops the left cycle (here held in the
-# take-over's handover snapshot by the recovery-marker lock) must not forget
-# that cycle's arm: the park the Stop hook runs next still takes it over rather
-# than attaching to it beside the orphan.
+# A park stopped while its take-over waits for the left arm to hand its cycle
+# over (here the left arm is held stopped, so the request stays pending) must
+# leave one arm on that cycle: the left arm hands over once it runs again, and
+# the park the Stop hook runs next follows the same watcher with no orphan arm
+# beside it.
 test_a_park_stopped_mid_take_over_leaves_the_take_over_to_the_next_park() {
-  local home holder host
+  local home host
   home=$(make_primary_home hook-takeover-interrupted)
   leave_a_cycle_for_main_and_restart "$home"
-  JG_STATE_OVERRIDE="$home/state" bash -c '
-    . "$1"
-    jg_lock_acquire_wait "$2" || exit 1
-    : > "$3"
-    while [ ! -e "$4" ]; do sleep 0.1; done
-    jg_lock_release "$2"
-  ' _ "$ROOT/bin/jg-wake-lib.sh" "$home/state/.watcher-down.lock" "$home/marker-lock-held" "$home/marker-lock-release" &
-  holder=$!
-  wait_until 100 test -e "$home/marker-lock-held" || fail "fixture: could not hold the recovery-marker lock"
+  kill -STOP "$LEFT_ARM" || fail "fixture: could not hold the left arm"
   turn_end "$home"
   wait_until 150 grep -q "	take-over	arm=$LEFT_ARM\$" "$home/state/.supervision-host.log" \
-    || fail "interrupted takeover: the park did not start a take-over of $LEFT_ARM: $(cat "$home/state/.supervision-host.log")"
+    || { kill -CONT "$LEFT_ARM"; fail "interrupted takeover: the park did not start a take-over of $LEFT_ARM: $(cat "$home/state/.supervision-host.log")"; }
   host=$(awk -F '\t' '$1 == "host" { print $2; exit }' "$home/state/.supervision-host")
   sleep 1
-  kill -0 "$LEFT_WATCHER" 2>/dev/null || fail "fixture: the take-over stopped the left watcher before the park was stopped"
-  kill -TERM "$host" 2>/dev/null || fail "fixture: the park host $host was not running"
-  wait_until 150 sh -c '! kill -0 "$1" 2>/dev/null' _ "$host" || fail "fixture: the park host did not stop"
-  : > "$home/marker-lock-release"
-  wait "$holder" 2>/dev/null || true
+  kill -0 "$LEFT_WATCHER" 2>/dev/null || { kill -CONT "$LEFT_ARM"; fail "the take-over stopped the left watcher"; }
+  kill -TERM "$host" 2>/dev/null || { kill -CONT "$LEFT_ARM"; fail "fixture: the park host $host was not running"; }
+  wait_until 150 sh -c '! kill -0 "$1" 2>/dev/null' _ "$host" || { kill -CONT "$LEFT_ARM"; fail "fixture: the park host did not stop"; }
+  kill -CONT "$LEFT_ARM"
   # The Stop hook runs the next park in place of the one stopped by a signal.
-  wait_until 150 host_owns_the_only_cycle "$home" \
-    || fail "interrupted takeover: the next park did not own the home's only watcher cycle (left arm $LEFT_ARM):"$'\n'"$(home_arms "$home")"$'\n'"$(cat "$home/state/.supervision-host.log")"
+  wait_until 150 host_follows_the_only_cycle "$home" "$LEFT_WATCHER" \
+    || fail "interrupted takeover: the next park did not follow the home's only watcher cycle (left arm $LEFT_ARM):"$'\n'"$(home_arms "$home")"$'\n'"$(cat "$home/state/.supervision-host.log")"
   ! kill -0 "$LEFT_ARM" 2>/dev/null || fail "interrupted takeover: the left arm still runs (pid $LEFT_ARM)"
-  pass "host+hook: a park stopped mid take-over leaves the take-over to the next park"
+  pass "host+hook: a park stopped mid take-over leaves one arm on the left cycle"
 }
 
 no_home_arms() { [ -z "$(home_arms "$1")" ]; }

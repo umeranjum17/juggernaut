@@ -25,6 +25,7 @@
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id>   Overwatch only: the captain waived his word for this project's live until the stable point
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> --release   Overwatch only: the captain's standing word lets this project's green release pull request merge by itself
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red moves the green pin, and every home, back to the last green one
+#        jg-trunk.sh ci <project-dir> <sha> red <url> <failed-check>  record a release failure once and submit its fix to dispatch
 #        jg-trunk.sh release <project-dir>             push the last green commit of the trunk and open the ONE release PR trunk -> default branch, owned by task release-<project>-<trunk>; refuses without his word
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> --autorelease   Overwatch only: the captain chose this project for the automatic release (publish, autorelease); a plain --release waiver does not
 #        jg-trunk.sh publish <project-dir>             for a project chosen for the automatic release: push the green pin once the trunk holds enough, or the tip as a candidate after a red; one batch at a time, never forced
@@ -163,7 +164,7 @@
 #
 # Every open captain call is a key in bin/jg-trunk-policy-lib.sh with its safe default; nothing
 # here changes with the answer. Records: data/trunk-landings.tsv (task, project, commit, epoch,
-# gate), data/trunk-in-use.tsv (project, commit, epoch, status), data/trunk-releases.tsv, data/trunk-ci.tsv (project,
+# gate, optional ticket=<id> and queue fields), data/trunk-in-use.tsv (project, commit, epoch, status), data/trunk-releases.tsv, data/trunk-ci.tsv (project,
 # commit, epoch, green|red, and `verify` for a charged verify red), data/trunk-words.tsv, data/trunk-publications.tsv (project,
 # trunk, commit, due, attempt, open, path automatic|fallback, url: one append-only row per publication, read by jg-outcome-ledger.sh).
 # `live` runs config/live-hook.<project> <project-dir> <sha> when it is executable. With none, a
@@ -225,6 +226,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/../core/trunk-verify/tip-code.sh"
 # shellcheck source=core/trunk-verify/record.sh
 . "$SCRIPT_DIR/../core/trunk-verify/record.sh"
+# shellcheck source=core/trunk-verify/repair.sh
+. "$SCRIPT_DIR/../core/trunk-verify/repair.sh"
 export JG_HOME JG_CONFIG_OVERRIDE="$CONFIG"
 
 usage() { sed -n '2,/^set -eu$/p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//' -e '$d'; }
@@ -374,7 +377,7 @@ tip_adopt_forward() {
 # a session's git hook settings, task id or account never reach the tests. JG_HOME is the home this script resolved.
 # A project whose gate needs more sets it once in config/trunk-policy (gate-env@<project>=NAME=value ...), and every gate command
 # of that project (the first run, the rerun, the tip and parent runs) starts with it, so no rerun can lose a variable its first run had.
-GATE_ENV='HOME PATH USER LOGNAME SHELL LANG LC_ALL TMPDIR JG_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME'
+GATE_ENV='HOME PATH USER LOGNAME SHELL LANG LC_ALL TMPDIR JG_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME JG_REQUIRED_SHARD_PARALLEL'
 # The NAME=value words of the project's gate-env key, read once per run and project into GATE_ENV_SET; a word that is not NAME=value
 # is refused once and left out.
 gate_env_set() {
@@ -1128,13 +1131,20 @@ lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
   printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$LANE_CAND" "$TRUNK" "$tip" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused $id"
 }
 
-# What every landing does after the trunk moved: the proofs that exist, the merged event and the ticket close. The landing's Evidence card
+# Write the receipt before other landing effects. The ticket link survives removal of the lane's metadata.
+landing_row() {  # <id> <meta> <landed commit> <gate> [queue fields...]
+  local id=$1 ticket commit=$3 gate=$4
+  ticket=$(jg_dod_meta_value "$2" ticket); shift 4
+  row trunk-landings.tsv "$id" "$PN" "$commit" "$(date +%s)" "$gate" "$@" ${ticket:+"ticket=$ticket"}
+}
+
+# What every landing does after the trunk moved: the proofs that exist, the merged event and ticket provenance. The landing's Evidence card
 # is core/landing-card's, an observer of these records; the PR-flow post-merge hook (merge-card) does not run for a landing.
 landed_effects() {  # <id> <lane head> <landed commit>   (META is the lane's record)
   record_proofs "$1" "$2" "$3" || :
   # The landing's timing rides on the ticket's land event; core/trunk-latency reads it back and raises the slow-delivery alert from it.
   local timing; timing=$(bash "$JG_ROOT/core/trunk-latency/latency.sh" measure "$JG_HOME" "$1" "$3" 2>/dev/null | jq -c --arg t "$TRUNK" '. + {trunk: $t}' 2>/dev/null) || timing=
-  # The same merge alert as bin/jg-merge-local.sh: the opt-in fleet ledger's merged event and the ticket close.
+  # The same merge alert as bin/jg-merge-local.sh: the opt-in fleet ledger's merged event.
   [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-fleet-ledger.sh" merged "$1" local || true
   trace_land "$1" jg-trunk-land "$3" "$timing"
   bash "$JG_ROOT/core/trunk-latency/latency.sh" check "$JG_HOME" >/dev/null 2>&1 || :
@@ -1389,7 +1399,7 @@ land_candidate() {
   [ -n "$still" ] || refuse "the trunk kept moving while $id was gated; it lands on the next try"
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land $id" "refs/heads/$TRUNK" "$cand" "$base" || refuse "$TRUNK changed while landing $id"
   put "$STATE/trunk-tip-$PN" "$cand"
-  queue_cols; row trunk-landings.tsv "$id" "$PN" "$cand" "$(date +%s)" "$GATE_KIND" "${QCOLS[@]}"
+  queue_cols; landing_row "$id" "$META" "$cand" "$GATE_KIND" "${QCOLS[@]}"
   record_gated_answer "$META" "$id" "$cand"
   unlock "$STATE/.trunk-$PN.lock"; front_release
   [ "$cand" = "$LANE_HEAD" ] || lane_follow "$LANE_BRANCH" "$LANE_HEAD" "$cand" "$(jg_dod_meta_value "$META" worktree)"
@@ -1538,7 +1548,7 @@ land_group() {
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land a batch of ${#CHAIN[@]}" "refs/heads/$TRUNK" "$top" "$B_TIP" || refuse "$TRUNK changed while landing the batch"
   put "$STATE/trunk-tip-$PN" "$top"
   queue_cols
-  for i in "${CHAIN[@]}"; do row trunk-landings.tsv "${B_ID[$i]}" "$PN" "${B_CUR[$i]}" "$(date +%s)" "$GATE_KIND" "batch-from=$B_BASE0" "${QCOLS[@]}"; record_gated_answer "${B_META[$i]}" "${B_ID[$i]}" "${B_CUR[$i]}"; done
+  for i in "${CHAIN[@]}"; do landing_row "${B_ID[$i]}" "${B_META[$i]}" "${B_CUR[$i]}" "$GATE_KIND" "batch-from=$B_BASE0" "${QCOLS[@]}"; record_gated_answer "${B_META[$i]}" "${B_ID[$i]}" "${B_CUR[$i]}"; done
   unlock "$STATE/.trunk-$PN.lock"
   for i in "${CHAIN[@]}"; do
     META=${B_META[$i]}
@@ -1782,15 +1792,19 @@ unlock() { jg_lock_release "$1" || true; LOCKS=${LOCKS/"$1 "/}; }
 
 # Report one charged red commit and change nothing on the trunk: the verify never reverts. The green pin goes back below the commit and the red
 # stays recorded (data/trunk-ci.tsv, source verify) so no later landing moves the pin over it, one line-red alert names the commit and its
-# ticket, and the lane's ticket is told. The ticket's owner repairs it forward or reverts it on a lane of its own; landings go on meanwhile.
+# ticket, the lane's ticket is told and a fix is sent to auto-dispatch. Landings go on meanwhile.
 report_red() {  # <commit> <reason> [<top>]
   local c=$1 id why
   id=$(awk -F'\t' -v c="$c" '$3 == c { i = $1 } END { print i }' "$DATA/trunk-landings.tsv" 2>/dev/null)
   lock "$STATE/.trunk-$PN.lock"; unpin_green "$c"; row trunk-ci.tsv "$PN" "$c" "$(date +%s)" red verify; unlock "$STATE/.trunk-$PN.lock"
-  why="$2${id:+ (ticket $id)}; nothing was reverted and landings go on; live stays on the last green commit $(green_short); ${id:-its owner} repairs it forward or reverts it on a lane of its own"
+  why="$2${id:+ (ticket $id)}; nothing was reverted and landings go on; live stays on the last green commit $(green_short)"
   line_red "$c" "$why"
-  [ -z "$id" ] || tell_lane "$id" "$TRUNK commit ${c:0:12} ($id) went red after it landed: $2. Nothing was reverted. Repair it on a new lane, or revert it there."
+  [ -z "$id" ] || tell_lane "$id" "$TRUNK commit ${c:0:12} ($id) went red after it landed: $2. Nothing was reverted."
   echo "verify: $TRUNK is red at ${c:0:12}: $why" >&2
+  if ! verify_repair "$c" "$2" "$id" >&2; then
+    echo "warning: verify repair for $PN at ${c:0:12} could not be prepared; the next tick retries the handoff" >&2
+    [ -z "$id" ] || echo "verify: if dispatch stays unavailable, $id repairs it forward or reverts it on a lane of its own" >&2
+  fi
   miss_charge "$c" "${3:-}"
 }
 
@@ -1849,6 +1863,7 @@ cmd_verify_due() {
   local tip green
   open_project "${1-}"
   vr_reap >&2  # a verify killed where no trap runs still ends with a record, so its tip is not started again
+  verify_repair_pending >&2 || echo "warning: a pending verify repair for $PN could not be prepared" >&2
   tip=$(rev "refs/heads/$TRUNK") || return 1
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
   [ "$green" != "$tip" ] || return 1
@@ -2425,7 +2440,7 @@ cmd_recover() {
   ensure_guard
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: recover $id" "refs/heads/$TRUNK" "$merge" "$actual" || refuse "trunk changed during recovery"
   put "$STATE/trunk-tip-$PN" "$merge"
-  row trunk-landings.tsv "$id" "$PN" "$merge" "$(date +%s)" recovery
+  landing_row "$id" "$meta" "$merge" recovery
   echo "recovered $TRUNK at $merge; not In use"
 }
 
@@ -2542,7 +2557,13 @@ cmd_ci() {
   sha=$(rev "${2-}") || die "'${2-}' does not resolve in $PROJ"
   git -C "$PROJ" merge-base --is-ancestor "$sha" "$tip" || refuse "${sha:0:12} is not on $TRUNK"
   case ${3-} in
-    green|red) ci_record "$sha" "$3" ;;
+    green) ci_record "$sha" green ;;
+    red)
+      case "$#" in
+        3) ci_record "$sha" red ;;
+        5) release_red "$sha" "$4" "$5" ;;
+        *) die "usage: jg-trunk.sh ci <project-dir> <sha> red [<release-url> <failed-check>]" ;;
+      esac ;;
     *) die "usage: jg-trunk.sh ci <project-dir> <sha> green|red" ;;
   esac
 }
@@ -3024,15 +3045,23 @@ ci_required_state() {  # <release PR url> <sha>
   case $runs in green|red|pending|absent) echo "$runs" ;; *) echo unknown ;; esac
 }
 
-# The fix ticket of a red CI on the pushed pin, filed once for the commit.
-file_ci_red_ticket() {  # <sha> <url>
-  local id="ci-red-$PN-${1:0:12}"
-  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" add "$id" \
-    "[blocker] CI required is red on the release of $PN at ${1:0:12}" --kind ship --priority 1 \
-    --body "CI required failed on $2 at $1; main stays where it is.
-Why: main moves only to a CI-green trunk commit, so every later commit waits behind this red.
-Done when: a fix lands on $TRUNK and its CI required run is green." >/dev/null 2>&1 \
-    || echo "warning: could not file the fix ticket $id" >&2
+# Both release observers reach this function under the trunk lock. Record the red once
+# and reuse a ticket from the older autorelease path if that path already filed one.
+release_red() {  # <sha> <release URL> <failed check>
+  local sha=$1 url=$2 check=$3 id=ci-red-release-$PN-${1:0:12} legacy=ci-red-$PN-${1:0:12} rc=0
+  [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never starts a release repair"
+  if awk -F'\t' -v p="$PN" -v s="$sha" '$1 == p && $2 == s && $4 == "red" { red=1 } END { exit !red }' "$DATA/trunk-ci.tsv" 2>/dev/null; then
+    if [ ! -f "$STATE/dispatch-approved/$id" ] && JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" show "$legacy" >/dev/null 2>&1; then
+      id=$legacy
+    fi
+  else
+    ci_record "$sha" red || rc=$?
+  fi
+  repair_start "$id" "[blocker] repair red release of $PN at ${sha:0:12} - $check" \
+    "The release pull request $url is red. It carries $PN at $sha.
+Failing check: $check.
+Repair forward on $TRUNK so the next green commit can release. Leave the failed release run in place." || return 1
+  return "$rc"
 }
 
 # Under the project's release waiver, main follows every CI-green trunk commit with no person in between. The commit is the one
@@ -3057,10 +3086,12 @@ cmd_autorelease() {
   case $st in
     green) ;;
     red)
-      if ! grep -q "^$PN	$rel	[0-9]*	red" "$DATA/trunk-ci.tsv" 2>/dev/null; then
-        ci_record "$rel" red >&2; file_ci_red_ticket "$rel" "$url"
+      if release_red "$rel" "$url" "CI required (FAILURE)" >&2; then
+        echo "autorelease: RED: CI required failed at ${rel:0:12}; $default stays at ${main:0:12} and repair was submitted to dispatch"
+      else
+        echo "autorelease: RED: CI required failed at ${rel:0:12}; $default stays at ${main:0:12} and repair submission failed"
       fi
-      echo "autorelease: RED: CI required failed at ${rel:0:12}; $default stays at ${main:0:12} and a fix ticket is filed"; return 0 ;;
+      return 0 ;;
     *) echo "autorelease: waiting: CI required is $st at ${rel:0:12}"; return 0 ;;
   esac
   ci_record "$rel" green >/dev/null

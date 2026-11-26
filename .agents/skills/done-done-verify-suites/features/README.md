@@ -10,3 +10,10 @@
 - [Fleet flow lane cap](fleet-flow-lane-cap.md): the home flow check counts live lanes only; a kept copy of a stopped lane stays listed but occupies no working slot.
 - [Hold table: owner questions, expiry reconciliation, and call cap](hold-table.md): run `done-done run hold-table`
 - [Item store contention and compaction](item-store-contention.md): run `done-done run item-store-contention`
+- [Fleet refresh and delivery repair](fleet-refresh-and-delivery-repair.md)
+- [Doctor resolves the done-done author route](done-done-author-route.md): run `done-done run done-done-author-route`
+- [Agent CLI contract](agent-cli-contract.md): run `done-done run agent-cli-contract`
+- [Recon delivery recovers after a board commit interruption](jg-recon-ready.md): run `done-done run jg-recon-ready`
+- [Muster requirements approval and frozen orders](muster-requirements.md): run `done-done run muster-requirements`
+- [Muster use-case catalogue](muster-use-cases.md) matches the approved pack's use cases to journeys and core objects.
+- [Muster to Blitz workflows](muster-workflow.md): run `done-done run muster-workflow`.

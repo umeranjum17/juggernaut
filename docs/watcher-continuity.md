@@ -289,8 +289,8 @@ A downtime republication of a pending episode reuses its generation.
 A watcher close leaves an announced downtime episode announced, while a successful durable append opens a fresh pending generation so a live watcher can recover the new work.
 An announced handling episode becomes pending downtime on the same generation because its handling turn may have been interrupted.
 That handling republication gives a successor exactly one recovery presentation without orphaning the acknowledgement already printed for that generation.
-A watcher stopped so an arm can take its cycle over (`bin/jg-watch-arm.sh --take-over`) publishes downtime like any close, but the taking arm restores an acknowledged episode that stop reopened only when the taken-over arm's cycle-ledger row for that exact arm and watcher records the watcher ending by the take-over's TERM and no wake was appended in between.
-The taking arm waits within a short bound for that row; a missing row or any other signal leaves downtime for the fresh cycle's ordinary recovery wake, while take-over still proceeds.
+A take-over (`bin/jg-watch-arm.sh --take-over`) never stops the watcher: the left arm hands its cycle over and the taking arm follows the same watcher, so the take-over publishes no downtime and leaves the episode as it was.
+A host that cannot hand downtime back for a close it never delivered stops its successor instead of leaving it for a take-over, so the retried park's fresh cycle runs the recovery check for that close.
 Any other episode is left for the next cycle's arm check.
 
 ### What an acknowledgement retires
@@ -368,6 +368,7 @@ The drain marks outcomes and action lines and prints a stable id for each outcom
 The away daemon buffers the complete outcome presentation for the supervisor and leaves those rows queued for explicit handling.
 Its header names the commands that record a relay reference or classification reason.
 A refused acknowledgement counts every open outcome of the batch at once and lists a bounded page of ids; `--outcomes-before` classifies every outcome first presented before a cut in one locked pass with one reason, and an outcome with a disposition is never asked for again.
+That sweep is refused whole (exit 3, nothing classified) while a finished Recon or critic lane in the range still owes a required next step, and the refusal names each lane and how its step is taken (`jg_fact_next_step` in `bin/jg-facts-lib.sh` is the one definition; [`turnend-guard.md`](turnend-guard.md) names the other two readers).
 An unseen signal or an outcome without a disposition refuses the acknowledgement before any queue row is consumed.
 An unanswered captain inbox note in the batch refuses it the same way: the captain's own note is the one wake that must never be retired without an answer.
 `bin/jg-captain-note-lib.sh` owns what counts as unanswered: the note is still in `state/inbox/`, has no reply at `state/inbox/.replies/<id>`, and was not acknowledged by `bin/jg-inbox.sh drain --ack <id>`.
@@ -441,8 +442,11 @@ Branch acknowledgement retiring the check-row receipts of exactly its granted se
 | Actionable output | Returns that reason normally. |
 | Zero/empty | Rechecks the home lock and beacon, attaches to a verified healthy successor when one exists, or resolves the close against the watcher's bounded terminal-delivery ledger. |
 
-An attached arm follows verified identity-matched successors and resolves the same way when that chain ends without one.
+An attached arm follows identity-matched successors and resolves the same way when that chain ends without one.
 It does this because it holds no handle on the watcher's stdout and cannot read the reason line itself.
+When its holder ends it waits only a short hand-off window for a successor to claim the lock, not the confirmation budget, which grows with every registered check; the [arm header](../bin/jg-watch-arm.sh) owns the window.
+A successor that has claimed the lock is followed while its first scan runs, and with none the delivered reason is reported at once.
+An arm whose close nobody reads, such as a detached start, confirms a live cycle and leaves it to its owner rather than following it as a second arm.
 
 ### Terminal-delivery ledger
 
@@ -526,7 +530,7 @@ They also prove that a legacy or handoff-phase watcher marker from an absent rep
 - The self-healing moved-generation acknowledgement that consumes its handled rows and names its remedy.
 - The already-acknowledged confirmation no-op for a matching generation, with its mismatched-generation, dead-pid, and lock-mismatch rejections preserved.
 - The manual-restart generation churn that makes a confirmation for the churned generation report a mismatch, which an arm check without a reopen leaves in place.
-- A take-over that stays quiet after a confirmed TERM, still surfaces queued work and self-exit downtime, and attaches without stopping a cycle the named arm does not own.
+- A take-over that adopts the running watcher with no cycle stopped, a fresh beacon, and supervision never read as down, plus an attached arm that reports a delivered wake within the hand-off window and a no-follow arm that leaves a live cycle to its owner (`tests/jg-watch-handoff.test.sh`).
 - The disposable-checkout arm refusal.
 - The home-gone and state-gone watcher exits.
 - The test reaper that stops a watcher armed for a temporary home.

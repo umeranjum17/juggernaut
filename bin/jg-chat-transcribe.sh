@@ -4,7 +4,7 @@
 # Usage:
 #   jg-chat-transcribe.sh setup     install the engine under state/captain-chat/stt (the owner's choice, never run
 #                                   by install or session start); downloads about 72 MB (Hex) and 730 MB (model)
-#   jg-chat-transcribe.sh run <wav> print the words in a 16 kHz mono wav on stdout, nothing else
+#   jg-chat-transcribe.sh run <wav>  print the words in a 16 kHz mono wav on stdout, nothing else
 #   jg-chat-transcribe.sh status    say whether the engine is installed
 #
 # The engine is Hex (github.com/anomalyco/hex, MIT) with its Parakeet Unified English model (NVIDIA Open

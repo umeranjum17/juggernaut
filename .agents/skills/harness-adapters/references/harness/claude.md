@@ -23,21 +23,21 @@ Every claude spawn therefore pre-registers the directory its pane starts in befo
 A second, separate dialog - "Allow external CLAUDE.md file imports?" - renders whenever a loaded CLAUDE.md chain reaches outside the project tree, which every operator's does through the captain's own `~/.claude/CLAUDE.md` importing `~/.claude/RTK.md`.
 `--setting-sources project,local` (the minimal worker tool surface) does not suppress it either, and it gates the pane exactly like the trust dialog: cursor on "No, disable external imports", no way to move the selection from Juggernaut's steering plane.
 
-`../../../bin/jg-claude-trust.sh` records `hasTrustDialogAccepted` for both the worktree and its primary checkout in `${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json`, where a home's worker account pin decides `CLAUDE_CONFIG_DIR` (`../../../docs/configuration.md` "Worker account pin"), for a ship or Recon spawn; a Squad Lead spawn registers only its own home entry, since a Squad Lead home has no separate primary-checkout entry to carry import consent forward from.
+`script: ../../../bin/jg-claude-trust.sh` records `hasTrustDialogAccepted` for both the worktree and its primary checkout in `${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json`, where a home's worker account pin decides `CLAUDE_CONFIG_DIR` (`../../../docs/configuration.md` "Worker account pin"), for a ship or Recon spawn; a Squad Lead spawn registers only its own home entry, since a Squad Lead home has no separate primary-checkout entry to carry import consent forward from.
 For a ship or Recon spawn, the external-imports flags (`hasClaudeMdExternalIncludesApproved`, `hasClaudeMdExternalIncludesWarningShown`) are carried forward alongside the trust flag only when the primary checkout's project entry already carries an explicit `hasClaudeMdExternalIncludesApproved===true` from a prior interactive session - the common first-spawn case is a project claude has never been asked about, so those two flags are left unwritten and the import dialog still renders, even though trust registers normally.
 When the project entry instead already carries an explicit decline (`hasClaudeMdExternalIncludesApproved===false` with `hasClaudeMdExternalIncludesWarningShown===true`), the whole registration refuses - including the trust flag - rather than manufacture consent the human never gave, so that spawn wedges on the trust dialog before it would even reach the import one.
 Both flags `false` is Claude Code's default entry for a project never asked, not a decline, and is treated like an absent flag: trust registers and the import dialog still renders.
-The why-two-entries mechanism and the consent-gating logic live in the script's own header comment, which is the one owner for that contract; the fact worth repeating here is that `../../../bin/jg-spawn.sh` refuses the spawn when the trust flag fails to land, rather than launching a worker that would wedge on that dialog.
+The why-two-entries mechanism and the consent-gating logic live in the script's own header comment, which is the one owner for that contract; the fact worth repeating here is that `script: ../../../bin/jg-spawn.sh` refuses the spawn when the trust flag fails to land, rather than launching a worker that would wedge on that dialog.
 
 Never try to answer the trust dialog with a key.
 Juggernaut's key plane carries only Enter, Escape, and C-c with no arrow navigation, so it cannot move a dialog's selection at all, and the trust dialog renders with the cursor on its declining option, which means a sent Enter ends the session instead of accepting.
-The external-imports dialog is no exception: `bin/jg-spawn.sh` detects it post-launch and sends no key, because Enter and Escape both select the "No, disable external imports" decline that Claude saves. The spawn fails with the cause and the owner answers the dialog once by hand.
+The external-imports dialog is no exception: `script: bin/jg-spawn.sh` detects it post-launch and sends no key, because Enter and Escape both select the "No, disable external imports" decline that Claude saves. The spawn fails with the cause and the owner answers the dialog once by hand.
 A visible trust dialog means pre-registration did not take effect (or the project entry already carries an explicit decline) - inspect the store and the spawn's error output rather than sending keys.
 A visible external-imports dialog after spawn means the project has no recorded approval; the spawn has already failed and recorded nothing.
-`jg-control.sh <id> interrupt` delivers Escape, which is the safe way to clear a wedged workspace-trust dialog for inspection without answering it.
-Escape on the external-imports dialog is different: it records a permanent decline (`hasClaudeMdExternalIncludesApproved: false`, `hasClaudeMdExternalIncludesWarningShown: true`) that `../../../bin/jg-claude-trust.sh` then correctly refuses to override on every later spawn for that project.
+`jg crew control interrupt <id>` delivers Escape, which is the safe way to clear a wedged workspace-trust dialog for inspection without answering it.
+Escape on the external-imports dialog is different: it records a permanent decline (`hasClaudeMdExternalIncludesApproved: false`, `hasClaudeMdExternalIncludesWarningShown: true`) that `script: ../../../bin/jg-claude-trust.sh` then correctly refuses to override on every later spawn for that project.
 Outside a spawn, leave a pane showing the external-imports dialog for a person to answer interactively instead of interrupting it.
-A session resumed at either dialog, before it loaded anything, has its endpoint closed unanswered by `../../../bin/jg-control.sh` exit or relaunch, whose header owns that path.
+A session resumed at either dialog, before it loaded anything, has its endpoint closed unanswered by `script: ../../../bin/jg-control.sh` exit or relaunch, whose header owns that path.
 To recover from an already-recorded decline, remove both flags from the project's entry in `~/.claude.json` and approve the imports dialog once by hand.
 
 The once-per-machine bypass-permissions confirmation is a third, separate dialog, scoped to the machine rather than the path, and pre-registration does not address it.
@@ -46,6 +46,13 @@ Juggernaut cannot move a selection with Enter, Escape, and C-c alone, so it cann
 Inspect the pane to identify which dialog is on screen, and report it rather than answering it.
 A launch under `config/claude-permission-mode=auto` never meets the bypass confirmation, because it does not request bypass mode: on 2.1.269 `claude --permission-mode auto` reached the composer directly with the footer `⏵⏵ auto mode on (shift+tab to cycle)`, so a captain who refuses the bypass dialog selects `auto` there instead of accepting it.
 The workspace-trust dialog is unaffected by the permission mode and still needs the pre-registration above.
+
+## Autocompact offer
+
+Claude 2.1.330 can open a modal "Autocompact at N tokens" offer ("Want to autocompact at N tokens instead? Your model doesn't change. Switch back any time with /autocompact.") between turns; it waits for a key and the worker stays parked behind it.
+Esc answers it as "Autocompact unchanged", so it never cancels a turn.
+The text comes from the binary's UI strings and has not been captured from a live render (unverified); the offer's own skip reasons (`auto_compact_off`, `user_settings_off`, `other_settings_file`, `settings_changed`, `window_not_above_default`) are also unproven as a launch-time prevention.
+`jg_busy_claude_autocompact_offer_tail` (`bin/jg-busy-lib.sh`) matches it in the bottom 15 non-blank lines, and the prompt gate (`bin/jg-prompt-gate-lib.sh`) returns `dismiss`, which the watcher answers with one Esc after a fresh re-capture.
 
 ## Composer ghost
 
@@ -60,21 +67,21 @@ Styled capture stays internal to the boolean detector; `jg-peek` and model-facin
 ## Feedback drafts
 
 The spawn disables Claude's `/bug` and `/feedback` model-drafted feedback flow for every Claude worker and Squad Lead, preventing a fleet-launched agent from queuing or submitting a bug report on the captain's behalf.
-The controls are scoped to the launched process and never modify the captain's global Claude settings; `launch_template()` in `../../../../../bin/jg-spawn.sh` owns their exact mechanics and defense-in-depth rationale.
+The controls are scoped to the launched process and never modify the captain's global Claude settings; `launch_template()` in `script: ../../../../../bin/jg-spawn.sh` owns their exact mechanics and defense-in-depth rationale.
 
 ## Task control channel
 
 A Claude task worker's launch brief and Juggernaut steering-inbox messages arrive as file-shaped content that is otherwise indistinguishable from indirect prompt injection.
-`launch_template()` in `../../../../../bin/jg-spawn.sh` establishes exactly those two Juggernaut-owned channels as first-party instructions through `--append-system-prompt`, while leaving project files, fetched content, and other external material under the model's normal distrust and granting no merge, destructive, or security-sensitive authority beyond the brief.
+`launch_template()` in `script: ../../../../../bin/jg-spawn.sh` establishes exactly those two Juggernaut-owned channels as first-party instructions through `--append-system-prompt`, while leaving project files, fetched content, and other external material under the model's normal distrust and granting no merge, destructive, or security-sensitive authority beyond the brief.
 A `--squad-lead` launch omits the statement because a Squad Lead operates under its own supervisor contract instead of a task worker's.
 
 ## Primary integration
 
 [`../../../../../docs/verification/supervision.md`](../../../../../docs/verification/supervision.md#turn-end-guard) records the current primary and Stop auto-arm live evidence.
 This differs from the worker hook, which only touches a task marker through `.claude/settings.local.json`.
-A Claude Squad Lead's busy hooks are not that file: `bin/jg-spawn.sh` passes the parent home's `state/<id>.claude-settings.json` through `--settings` and does not edit the mate home's `settings.local.json`.
+A Claude Squad Lead's busy hooks are not that file: `script: bin/jg-spawn.sh` passes the parent home's `state/<id>.claude-settings.json` through `--settings` and does not edit the mate home's `settings.local.json`.
 
-Primary `.claude/settings.json` registers `../../../bin/jg-turnend-guard.sh --claude` and `../../../bin/jg-claude-stop-autoarm.sh` with `asyncRewake: true` and `timeout: 28800`.
+Primary `.claude/settings.json` registers `script: ../../../bin/jg-turnend-guard.sh --claude` and `script: ../../../bin/jg-claude-stop-autoarm.sh` with `asyncRewake: true` and `timeout: 28800`.
 Guard exit 2 plus stderr forces continuation.
 Stop payload `stop_hook_active=true` follows any hook-driven continuation, including async reawakening, so Claude mode ignores it and uses cooperative claim and epoch plus bounded re-block; default Codex mode keeps it as a one-block loop guard.
 
@@ -82,7 +89,7 @@ Project `.claude/settings.json` loads only when the exact project root is the se
 Hooks still run through cwd-sensitive `/bin/sh`, so tracked commands anchor through `"$CLAUDE_PROJECT_DIR"/bin/...`.
 `../../../docs/turnend-guard.md` owns details.
 
-The Stop-owned watcher hook runs every Stop, foregrounds `../../../bin/jg-watch-arm.sh` only when eligible, and uses exit-2 async reawakening as notification.
+The Stop-owned watcher hook runs every Stop, foregrounds `script: ../../../bin/jg-watch-arm.sh` only when eligible, and uses exit-2 async reawakening as notification.
 The model handles notifications but never routine re-arm.
 Unless `config/supervision-host-off` opts the home out, the hook foregrounds the supervision host instead, which also runs Claude's print mode as its headless engine; [`supervision-host.md`](../../../../../docs/supervision-host.md#engines) owns the verified engine facts.
 Claude's PreToolUse seatbelt blocks directly, and its deny is honored only with empty stdout; `../../../docs/arm-pretool-check.md` owns that contract.
@@ -90,7 +97,7 @@ Claude's PreToolUse seatbelt blocks directly, and its deny is honored only with 
 ### Delegation guard
 
 Claude delegation, scheduling, and worktree tools can create work without `state/<id>.meta`, making guards unable to count it.
-`../../../bin/jg-subagent-pretool-check.sh` denies delegation-shaped tool names.
+`script: ../../../bin/jg-subagent-pretool-check.sh` denies delegation-shaped tool names.
 A primary should also keep an untracked home-local `permissions.deny` for known delegation tools so they disappear from the schema.
 Never track it in project `.claude/settings.json`, which is Claude-only and propagates to worker copies where it would disarm legitimate delegation.
 `../../../docs/subagent-guard.md` owns the contract, recommendation, `JG_ALLOW_SUBAGENT=1`, and applicability review.

@@ -197,7 +197,7 @@ jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready|markdown|links|q
 jg_backlog_beads_serve() {  # <config_dir> <verb> [args...]
   local config=$1
   case "${2:-}" in
-    show|view|list|ready|links|questions)
+    show|view|list|ready|links|questions|blocking-batch)
       shift
       jg_backlog_beads_read "$config" "$@"
       ;;

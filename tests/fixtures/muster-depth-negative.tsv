@@ -1,0 +1,22 @@
+# label	state	pack	ask  (round 4, critic round 3: everyday bug fixes and blockers whose object holds a complex noun; written for this test)
+# each must be skip: a fix is small unless a complex verb (migrate, redesign, rewrite, re-architect) is also asked
+skip	mature	no	[blocker] Fix security header regression
+skip	mature	no	Fix a bug in the login sync
+skip	mature	no	Fix broken gate timeout
+skip	mature	no	Fix priority sorting bug
+skip	mature	no	Fix routing 404 on mobile
+skip	mature	no	Revert broken rules check
+skip	mature	no	Fix payment button crash
+skip	mature	no	[blocker] Sync stops after the laptop sleeps
+skip	mature	no	Fix the schema validator rejecting empty lists
+skip	mature	no	Repair the platform badge on the settings page
+skip	mature	no	Fix privacy banner overlapping the footer
+skip	mature	no	Revert the parallel test runner change
+skip	mature	no	Fix the state machine test that times out
+skip	mature	no	Patch the onboarding email typo in the subject
+skip	mature	no	Fix the consent checkbox not saving
+skip	mature	no	[blocker] Payments page shows a blank screen
+skip	mature	no	Debug the release train script failing on tags
+skip	mature	no	Fix the architecture diagram link in the docs
+skip	mature	no	Restore the missing priority column in the board
+skip	mature	no	Fix migration guide links that 404

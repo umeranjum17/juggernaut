@@ -342,6 +342,87 @@ def links(tasks, args):
     print("\n".join(sorted(ident for ident in linked if ident not in words)))
 
 
+def blocking_batch(tasks, rows, args):
+    """Evaluate captain-hold blocking for every id in <ids-file> from one read of the store.
+
+    Prints `blocker\\t<id>\\t<blocker>\\t<title>` for open holds/gates (self or one-hop linked)
+    and `maybe\\t<id>\\t<target>\\t<title>` for linked unheld, unanswered `[design-ux]` rows
+    whose build-approval signature `bin/jg-captain-hold.sh` checks once per unique target.
+    """
+    if len(args) != 1:
+        refuse("Expected 1 positional argument, got %d" % len(args), "usage: blocking-batch <ids-file>")
+    with open(args[0]) as handle:
+        wanted = [line.strip() for line in handle if line.strip()]
+
+    def clean(value):
+        if not value or value == "-":
+            return ""
+        value = value.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+        return "".join(c for c in value if ord(c) >= 32 and ord(c) != 127)[:512]
+
+    by_id = {item["id"]: item for item in tasks}
+    by_legacy = {}
+    mentioned_by = {}
+    for item in tasks:
+        for name in item["names"]:
+            by_legacy.setdefault(name, []).append(item)
+        for m in item["mentions"]:
+            mentioned_by.setdefault(m, []).append(item["id"])
+
+    open_hold = set()
+    design_maybe = set()
+    for item in tasks:
+        if item["state"] == "done":
+            continue
+        if item["hold_kind"] == "captain":
+            open_hold.add(item["id"])
+            continue
+        labels_val = "" if item["labels"] == "-" else item["labels"]
+        title_val = "" if item["title"] == "-" else item["title"]
+        if "design-ux" in (labels_val + title_val):
+            gates = gates_of(rows[item["id"]], rows, closed=True)
+            has_open = any(g.get("status") != "closed" for g in gates)
+            has_ans = any((g.get("metadata") or {}).get("resolution") in ("answered", "released") for g in gates)
+            if has_open or not has_ans:
+                design_maybe.add(item["id"])
+
+    seen = set()
+    for ident in wanted:
+        if ident in seen:
+            continue
+        seen.add(ident)
+        own = by_id.get(ident)
+        if own is None:
+            hits = by_legacy.get(ident, [])
+            own = hits[0] if len(hits) == 1 else None
+        if own is None:
+            continue
+        words = {ident, own["id"], *own["names"]}
+        definite = {}
+        maybe = {}
+        if own["id"] in open_hold:
+            definite[ident] = clean(own["title"])
+        linked = set()
+        for w in words:
+            linked.update(mentioned_by.get(w, ()))
+        for name in own["mentions"]:
+            if name in by_id:
+                linked.add(name)
+            else:
+                linked.update(item["id"] for item in by_legacy.get(name, ()))
+        for target_id in linked:
+            if target_id in words:
+                continue
+            if target_id in open_hold:
+                definite[target_id] = clean(by_id[target_id]["title"])
+            elif target_id in design_maybe:
+                maybe[target_id] = clean(by_id[target_id]["title"])
+        for target_id in sorted(definite):
+            print("blocker\t%s\t%s\t%s" % (ident, target_id, definite[target_id]))
+        for target_id in sorted(maybe):
+            print("maybe\t%s\t%s\t%s" % (ident, target_id, maybe[target_id]))
+
+
 def question_expiry(gate):
     """One expiry rule for owner gates, including gates created before the protocol.
 
@@ -419,7 +500,7 @@ def main():
     tasks.sort(key=lambda t: rows[t["id"]].get("closed_at") or "", reverse=True)
     tasks.sort(key=lambda t: ["in_flight", "queued", "done"].index(t["state"]))
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
-    serve = {"show": show, "view": show, "ready": lambda t, a: ready(t, a, answer), "list": listing, "markdown": markdown, "links": links}.get(verb)
+    serve = {"show": show, "view": show, "ready": lambda t, a: ready(t, a, answer), "list": listing, "markdown": markdown, "links": links, "blocking-batch": lambda t, a: blocking_batch(t, rows, a)}.get(verb)
     if serve is None:
         refuse("Unknown read verb: " + verb)
     serve(tasks, sys.argv[2:])

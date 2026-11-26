@@ -19,6 +19,10 @@
 # rings at once if it comes back. Records sit in <home>/data/jg-goal-loop/, never in state/.
 # A home with no Goal store configured is silent. A store that cannot be read raises one wake line per
 # reason; the wrapper's own refusal text is the reason, and no other bd is tried.
+# An authorized Goal (declared --auto-ship) wakes no lead for ship or fix: the check starts the step itself
+# (jg-goal.sh start-step: a ticket, its brief and an approved start for the home's dispatch check) and, while the step waits,
+# closes it when the trunk lander has landed that ticket (jg-goal.sh settle-step). A start that is refused rings once with its
+# cause and is tried again on the next pass. A Goal declared without --auto-ship wakes the lead as before.
 # A stop gets one message (jg-goal.sh notice) and a finish gets one message and closes the epic (jg-goal.sh finish).
 # Each message is keyed on the epic before it is printed, so a second pass or a restart prints nothing twice.
 # A stopped Goal costs no wake after its message. Closing the stop row (jg-goal.sh resume) is the whole resume.
@@ -53,7 +57,8 @@ if ! rows=$(JG_HOME=$HOME_DIR timeout 20 "$GOAL" rows 2>"$err"); then
 fi
 rm -f "$DATA/store-refused"
 
-# One reduction for every Goal: <id> TAB <state> TAB <step or stop row> TAB <ask> TAB <message already sent>.
+# One reduction for every Goal: <id> TAB <state> TAB <step or stop row> TAB <ask> TAB <message already sent> TAB <auto when the
+# Goal was declared --auto-ship> TAB <current step row> TAB <that row's ticket>; `-` stands for an empty field.
 states=$(jq -r '
   def rank: ["ship","merged","released","running","proven"];
   . as $all
@@ -71,7 +76,8 @@ states=$(jq -r '
      else ["waiting", $cur.metadata.kind] end) as $r
   | (if $r[0] == "stopped" then $m | has($sk + "stop_" + ($r[1] | gsub("[^A-Za-z0-9]"; "_")))
      elif $r[0] == "finished" then $m | has($sk + "finish") else false end) as $sent
-  | [$e.id, $r[0], $r[1], $ask, (if $sent then "sent" else "new" end)] | @tsv' <<< "$rows" 2>/dev/null) || { echo "goal-loop: the Goal rows were not readable JSON" >&2; exit 1; }
+  | [$e.id, $r[0], $r[1], $ask, (if $sent then "sent" else "new" end), (if $e.metadata.goal.auto_ship == true then "auto" else "-" end),
+     ($cur.id // "-"), ($cur.metadata.ticket // "-")] | @tsv' <<< "$rows" 2>/dev/null) || { echo "goal-loop: the Goal rows were not readable JSON" >&2; exit 1; }
 [ "$verb" = check ] || { [ -z "$states" ] || printf '%s\n' "$states"; exit 0; }
 
 # Run one write verb of jg-goal.sh and print its message. A write that fails rings once per reason.
@@ -79,9 +85,10 @@ announce() {  # <goal id> <verb> <args...>
   local id=$1 out sig
   shift
   out=$(JG_HOME=$HOME_DIR timeout 25 "$GOAL" "$@" 2>&1 < /dev/null)
-  case $? in  # 3 is a verb that made a stop instead of acting
+  case $? in  # 3 is a verb that made a stop instead of acting; 4 is a verb with nothing to do yet
     0) [ -z "$out" ] || echo "goal-loop: $out"; rm -f "$DATA/write-failed"; return 0 ;;
     3) rm -f "$DATA/write-failed"; return 3 ;;
+    4) return 0 ;;
   esac
   sig=$(printf '%s' "$id $out" | cksum | cut -d' ' -f1)
   [ "$(cat "$DATA/write-failed" 2>/dev/null)" = "$sig" ] && return 1
@@ -110,13 +117,17 @@ proof_tick() {  # <goal id> <state>
 }
 
 seen=' '
-while IFS=$'\t' read -r id st step ask sent; do
+while IFS=$'\t' read -r id st step ask sent auto row ticket; do
   [ -n "$id" ] || continue
   seen="$seen$id "
   rec=$DATA/$id.next
   [ "$st" != stopped ] || [ "$sent" = sent ] || announce "$id" notice "$id" "$step"
   [ "$st" != finished ] || announce "$id" finish "$id"
   if [ "$step" = proven ] && { [ "$st" = next ] || [ "$st" = waiting ]; }; then proof_tick "$id" "$st"; rm -f "$rec"; continue; fi
+  if [ "$auto" = auto ] && { [ "$step" = ship ] || [ "$step" = fix ]; }; then
+    if [ "$st" = next ]; then announce "$id" start-step "$id" "$row"; rm -f "$rec"; continue; fi
+    if [ "$st" = waiting ] && [ "$ticket" != - ]; then announce "$id" settle-step "$id" "$row"; fi
+  fi
   if [ "$st" != next ]; then rm -f "$rec"; continue; fi
   if [ -f "$rec" ]; then
     read -r last_step last_at < "$rec"

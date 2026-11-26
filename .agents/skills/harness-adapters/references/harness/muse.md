@@ -17,7 +17,7 @@ The router owns Muse's task-kind boundary.
 | Resume | `muse resume --last` or `muse resume <session-uuid>`; bare `muse resume` opens a picker. |
 | Autonomy | `--yolo` disables approval and sandbox and trusts the workspace. |
 | Trust | Dialog `Do you trust this workspace?`, choice `1 Trust and continue` preselected for Enter; `--yolo` suppresses it, which fresh task paths require. |
-| Marker | None; identity comes from anchored `muse-bin-*` ancestry, which `../../../bin/jg-harness.sh` keeps a retained foreign marker from overriding, while `MUSE_CURRENT_SESSION_LOG` is a path rather than identity and its export to tools is unverified. |
+| Marker | script: None; identity comes from anchored `muse-bin-*` ancestry, which `../../../bin/jg-harness.sh` keeps a retained foreign marker from overriding, while `MUSE_CURRENT_SESSION_LOG` is a path rather than identity and its export to tools is unverified. |
 | Composer | Bordered `⟩`, truecolor `38;2;90;160;255`, luminance about 149.9 and narrowly above ghost threshold 128; typed text is `38;2;204;211;219`, about 209.8, with no observed placeholder or ghost. |
 | Effort | `--reasoning-effort`, default `high`, accepts `none\|minimal\|low\|medium\|high\|xhigh\|ultra`; shared values expose low through xhigh, explicit captain `max` maps to `ultra`, and `none` or `minimal` remain unreachable. |
 
@@ -58,7 +58,7 @@ An open run is trusted busy and settled log trusted idle; missing binding or mat
 ## Native sub-agents and worktrees
 
 Native children use per-child worktrees only with opt-in `--subagent-worktree-isolation`; capability says default-on while omission stays shared, and verified labs produced no nested copy.
-`../../../bin/jg-teardown.sh` excludes no Muse path.
+script: `../../../bin/jg-teardown.sh` excludes no Muse path.
 It excludes `.claude/settings.local.json` because Juggernaut writes it, but Muse scratch is worker output and must refuse cleanup when uncommitted.
 Inspect, never force past, that refusal.
 

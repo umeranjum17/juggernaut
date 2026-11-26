@@ -45,3 +45,6 @@ not apply `n/a: <reason>`. A critic gap that names a missing standing ask is a s
 22. Every field the replaced records carry today (columns, metadata keys, body conventions, labels), each with where it
     lives after the plan, and one owner per fact: no fact kept in two records with a reconciler between them.
 23. Where the design's files live on a host with several homes, and how each home finds them.
+24. The agreed pack: with a muster pack, cite its words, decisions, journeys and charter tickets by path for each slice, and put its `muster` block in the plan.
+    A finding that contradicts the pack is reported as a conflict, never worked around.
+    Without a pack, `n/a: no pack`.

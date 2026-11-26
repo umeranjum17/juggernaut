@@ -55,6 +55,34 @@ assert_not_contains "$out" "refusing to skip" "the overlay refused a repository 
 [ -d "$d/cloned/.git" ] || fail "the clone made under the overlay has no repository"
 pass "a repository is created under the overlay"
 
+# jg-5hw: a refresh run by a copy of the code that is deleted afterwards (a verify copy, a go-live tool export) must not write
+# that copy's path into the hook. The home's own copy stays the target, so a commit after the cleanup still works.
+h="$d/home"
+mkdir -p "$h/bin" "$h/state" "$h/data/trunk/.verify-code.AbC123/bin"
+cp "$STRIP" "$h/bin/" && cp "$STRIP" "$h/data/trunk/.verify-code.AbC123/bin/"
+jg_git_init_commit "$h/wt"
+"$h/bin/jg-git-strip-ai-trailers.sh" install "$h/state/t3.git-hooks" "$h/wt" || fail "home install failed"
+hh=$(cd "$h/state/t3.git-hooks" && pwd -P)
+chmod u+w "$hh" && mv "$hh/pre-push" "$d/old-pre-push" && chmod 500 "$hh"
+for via in override parent; do
+  # Stale in the way an older hook set was: one wrapper gone, so refresh also rewrites the commit-msg text it compares.
+  chmod u+w "$hh"
+  sed -i "s#$h/bin/jg-git-strip-ai-trailers.sh#/gone/.verify-code.Old/bin/jg-git-strip-ai-trailers.sh#" "$hh/commit-msg"
+  chmod 500 "$hh"
+  if [ "$via" = override ]; then
+    JG_ROOT_OVERRIDE=$h "$h/data/trunk/.verify-code.AbC123/bin/jg-git-strip-ai-trailers.sh" refresh "$h/state" >/dev/null 2>&1 || fail "refresh from the verify copy failed"
+  else
+    (unset JG_ROOT_OVERRIDE; "$h/data/trunk/.verify-code.AbC123/bin/jg-git-strip-ai-trailers.sh" refresh "$h/state" >/dev/null 2>&1) || fail "refresh from the verify copy failed"
+  fi
+  assert_not_contains "$(cat "$hh/commit-msg")" ".verify-code" "a refresh from a verify copy wrote the copy's path into the hook ($via)"
+  assert_contains "$(cat "$hh/commit-msg")" "$h/bin/jg-git-strip-ai-trailers.sh" "the hook does not name the home's own copy ($via)"
+done
+rm -rf -- "$h/data/trunk/.verify-code.AbC123"
+printf 'x\n' >"$h/wt/f" && git -C "$h/wt" add f
+out=$(cd "$h/wt" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=$hh git -c user.name=t -c user.email=t@example.com commit -q -m "jg-5hw commit after the verify copy is gone" 2>&1) ||
+  fail "a commit failed after the verify copy was deleted: $out"
+pass "a refresh from a deleted verify copy leaves the hook on the home's own copy"
+
 # The files this journey owns stay ShellCheck-clean, so CI's lint cannot refuse the landing.
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -x "$ROOT/bin/jg-git-strip-ai-trailers.sh" "${BASH_SOURCE[0]}" || fail "shellcheck reports findings"

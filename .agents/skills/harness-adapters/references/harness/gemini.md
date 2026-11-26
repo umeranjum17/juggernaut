@@ -2,7 +2,7 @@
 
 Google's `gemini` TUI, verified end to end on 2026-09-04 with gemini-cli 0.58.0 on Linux.
 Launch shape: `GEMINI_CLI_TRUST_WORKSPACE=true gemini -y "$(cat <brief>)"`.
-Verified as a OPERATOR and Recon adapter only; `../../../../../bin/jg-spawn.sh` refuses a Squad Lead launch on it because `../../../../../docs/supervision-protocols/` carries no gemini wake protocol.
+Verified as a OPERATOR and Recon adapter only; `script: ../../../../../bin/jg-spawn.sh` refuses a Squad Lead launch on it because `../../../../../docs/supervision-protocols/` carries no gemini wake protocol.
 
 ## Operating facts
 
@@ -56,7 +56,7 @@ It hides `~/.agents/skills`, so every user skill silently disappear from that wo
 
 ## Detection
 
-`GEMINI_CLI=1` is load-bearing rather than a fast path, so `../../../../../bin/jg-harness.sh` checks it BEFORE `CLAUDECODE`.
+`GEMINI_CLI=1` is load-bearing rather than a fast path, so `script: ../../../../../bin/jg-harness.sh` checks it BEFORE `CLAUDECODE`.
 Gemini does not clear an inherited `CLAUDECODE`, so a gemini worker under a claude primary carries both markers and whichever is tested first wins; the spawn additionally clears the foreign markers at the launch boundary.
 
 Ancestry cannot cover the gap.
@@ -68,19 +68,19 @@ Do not close that by matching `MainThread`: it would make every node process's a
 The same verified tool process carried the CLAUDE primary's value (`claude-code_2-1-260_agent`), so it identifies the launcher, not the running harness.
 
 Pane liveness has the same problem and needs its own answer, because the marker is not visible to a process scan.
-A live gemini pane's foreground group reads `comm=MainThread` and `argv0=<node path>`, so neither of `bin/backends/tmux.sh`'s existing name sources can see it, and `bin/jg-control.sh` refused every lifecycle verb with `endpoint reads 'ambiguous'` until this was closed.
+A live gemini pane's foreground group reads `comm=MainThread` and `argv0=<node path>`, so neither of `bin/backends/tmux.sh`'s existing name sources can see it, and `script: bin/jg-control.sh` refused every lifecycle verb with `endpoint reads 'ambiguous'` until this was closed.
 `../../../../../bin/jg-gemini-lib.sh` owns the narrow structural rule that fixes it: identity comes from argv[1], the script argument, accepted only when it is named `gemini` or lives under `@google/gemini-cli/`.
 It is structural and runs no subprocess, for the same reason cursor's rule does not: probing a stranger's binary during a liveness poll is the hazard being avoided.
 A bare interpreter, an unrelated node script, and a gemini name appearing later on a command line are all rejected, so a stranger's node pane is never reported as a live agent.
 
 ## Worker busy state and turn end
 
-`../../../../../bin/jg-spawn.sh` writes a Juggernaut-owned per-task settings file at `state/<id>.gemini-settings.json` with three hooks bound to the minted busy generation, and the launch reaches it through `GEMINI_CLI_SYSTEM_SETTINGS_PATH`.
+`script: ../../../../../bin/jg-spawn.sh` writes a Juggernaut-owned per-task settings file at `state/<id>.gemini-settings.json` with three hooks bound to the minted busy generation, and the launch reaches it through `GEMINI_CLI_SYSTEM_SETTINGS_PATH`.
 This wiring belongs only to the canonical exact `gemini` adapter template, which receives busy-state wiring, the turn-end hook, and trusted busy state together.
 A raw Gemini-shaped launch is an unverified escape hatch: it receives no busy-state wiring or turn-end hook and therefore has no trusted busy state.
 It is deliberately NOT the worktree's `.gemini/settings.json`: unlike Claude's `settings.local.json`, that path is the PROJECT's own committed settings file, so writing it would clobber a project's configuration and retiring it would delete a tracked file.
 Hook arrays MERGE across Gemini's settings layers rather than overriding, so a project's own hooks still run alongside Juggernaut's; both were observed firing for one turn.
-`../../../../../bin/jg-teardown.sh` removes the file, so nothing survives into a pooled worktree.
+`script: ../../../../../bin/jg-teardown.sh` removes the file, so nothing survives into a pooled worktree.
 `BeforeAgent` records busy, `AfterAgent` records idle and keeps the `state/<id>.turn-ended` touch as the watcher NOTIFICATION, and `SessionEnd` records idle so an abnormal end cannot strand a busy record.
 Each hook command prints the empty JSON object Gemini's hook contract requires and tolerates a refused event, so a stale-generation writer can never break Gemini's own lifecycle.
 

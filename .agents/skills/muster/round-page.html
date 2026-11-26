@@ -1,0 +1,73 @@
+<!doctype html>
+<!--
+  The page a muster round shows next to its cards: read the proposal here, answer on the cards.
+  Placeholders are {{name}}; a block between "repeat" comments is written once per item.
+  The page changes no state: an answer is given on a card, or in chat as R<round>Q<k> <letter> (jg-muster.sh answer).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{project}} - round {{round}}</title>
+<style>
+  :root { color-scheme: light dark; --ink: #1d2430; --muted: #596273; --line: #d5dae3; --bg: #fafbfc; --card: #ffffff; --pick: #e6f1ff; --pick-line: #2f6fd0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #e8ecf3; --muted: #a2adc0; --line: #343c4b; --bg: #14181f; --card: #1b212b; --pick: #1c2f4d; --pick-line: #6ea2f0; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 46rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.15rem; margin: 0 0 .25rem; }
+  .muted { color: var(--muted); }
+  section.question, section.proposal, section.decided { background: var(--card); border: 1px solid var(--line); border-radius: .5rem; padding: 1rem; margin: 1rem 0; }
+  .qid { font: 600 .85rem ui-monospace, monospace; color: var(--muted); }
+  .tag { display: inline-block; font-size: .75rem; border: 1px solid var(--line); border-radius: 1rem; padding: 0 .5rem; margin-left: .5rem; }
+  ol.options { list-style: none; padding: 0; margin: .75rem 0 0; }
+  ol.options li { border: 1px solid var(--line); border-radius: .4rem; padding: .5rem .75rem; margin: .4rem 0; }
+  ol.options li.recommended { background: var(--pick); border-color: var(--pick-line); }
+  .letter { font-weight: 700; margin-right: .4rem; }
+  .why { margin: .5rem 0 0; font-size: .95rem; }
+  footer { margin-top: 1.5rem; font-size: .9rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>{{project}}: round {{round}}</h1>
+    <p class="muted">Revision {{revision}}. {{how_to_answer}}</p>
+  </header>
+
+  <section class="proposal">
+    <h2>The proposal</h2>
+    <p>{{proposal}}</p>
+  </section>
+
+  <!-- repeat: question -->
+  <section class="question" id="{{qid}}">
+    <span class="qid">{{qid}}</span><span class="tag">{{label}}</span>
+    <h2>{{question}}</h2>
+    <p>{{context}}</p>
+    <ol class="options">
+      <!-- repeat: option; the recommended one carries class="recommended" and is the one a plain "yes" accepts -->
+      <li class="{{recommended_class}}"><span class="letter">{{letter}}</span>{{label_text}}<br><span class="muted">{{outcome}}</span></li>
+      <!-- end repeat: option -->
+    </ol>
+    <p class="why"><strong>Recommended: {{recommended_letter}}.</strong> {{recommend_reason}}</p>
+    <p class="muted">Something else? Write it on the card; your words are kept as written.</p>
+  </section>
+  <!-- end repeat: question -->
+
+  <section class="decided">
+    <h2>Decided for you</h2>
+    <p class="muted">Each of these was settled without asking, because the answer can be looked up, an owner rule already gives it, or it changes nothing a user sees. Say so on any card, or in chat, to flip one.</p>
+    <ul>
+      <!-- repeat: decided -->
+      <li>{{decided}}</li>
+      <!-- end repeat: decided -->
+    </ul>
+  </section>
+
+  <footer class="muted">Answer on a card, or in chat: <code>R{{round}}Q1 a</code>, <code>R{{round}} yes to the rest</code>. After a revision, start with <code>R{{round}}.{{revision}}</code>.</footer>
+</main>
+</body>
+</html>

@@ -67,7 +67,7 @@ URL: $url
 Failing job: $job
 First failing line: $line
 Never re-run; fix the root cause. bin/jg-ci-rerun.sh refuses a re-run of this run until this ticket carries a 'root-cause:' note."
-  if JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" add "$item" "$title" -l blocker --kind ship --body "$body" >/dev/null 2>&1 \
+  if BEADS_ACTOR=alert:repair JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" add "$item" "$title" -l blocker --kind ship --body "$body" --repo "$proj" >/dev/null 2>&1 \
     || JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" show "$item" >/dev/null 2>&1; then
     mkdir -p "$MEM" 2>/dev/null && printf '%s\n' "$url" > "$MEM/${repo//\//__}.$id" 2>/dev/null || :
     ci_blocker "$sha" "$id"

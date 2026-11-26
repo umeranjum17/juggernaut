@@ -84,6 +84,7 @@ case $ORDER_REF in
   *[!A-Za-z0-9._-]*) fail "the owner order \"$ORDER_REF\" is not one reference: write MainNNN or the id of a [captain-ask] row" ;;
 esac
 ORDER_LINE=${ORDER_REF:+Owner order: $ORDER_REF.}
+ROUTE_FILE=${JG_PLAN_ROUTE_FILE:-}
 
 # The slices of this owner, one compact JSON object per line, in file order.
 MINE=$(jq -c --arg o "$OWNER" '.slices // [] | map(select(.owner_home == $o)) | .[]' "$PLAN_FILE")
@@ -226,6 +227,7 @@ for id in "${ORDER[@]}"; do
       body=$(printf '%s\nPlan: %s, slice %s (owner %s).\nFiles: %s' "${sections:-$title}" "$PLAN" "$id" "$OWNER" \
         "$(jq -r '.files | join(", ")' <<<"$slice")")
       body+=${ORDER_LINE:+$'\n'$ORDER_LINE}
+      body+=${ROUTE_FILE:+$'\n'Captain order route: $ROUTE_FILE}
       args=(add --parent "$PLAN" "[feature] $title" --repo "$project" --priority 2 --body "$body" --json)
       for dep in ${DEPS[$id]}; do args+=(--blocked-by "${ROW[$dep]:-$dep}"); done
       made=$(backlog_ "${args[@]}") || fail "could not file slice $id: $made"

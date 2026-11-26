@@ -5,16 +5,22 @@ set -eu
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 d=$(jg_test_tmproot jg-jev-mem-guard)
 export JG_HOST_MEMORY_PROC="$d/proc" JG_HOST_MEMORY_CGROUP_ROOT="$d/cgroup"
+export JG_HOST_MEMORY_MACHINE_DIR="$d/machine" JG_HOST_MEMORY_SECS=60
 app="$JG_HOST_MEMORY_CGROUP_ROOT/user.slice/user-$(id -u).slice/user@$(id -u).service/app.slice"
-mkdir -p "$JG_HOST_MEMORY_PROC/pressure" "$app" "$d/state"
+mkdir -p "$JG_HOST_MEMORY_PROC/pressure" "$app" "$d/state" "$JG_HOST_MEMORY_MACHINE_DIR"
 printf 'MemAvailable: 20971520 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n' > "$JG_HOST_MEMORY_PROC/meminfo"
 printf 'some avg10=0 avg60=0 avg300=0 total=0\n' > "$JG_HOST_MEMORY_PROC/pressure/memory"
 printf 'some avg10=0 avg60=0 avg300=0 total=0\n' > "$app/memory.pressure"
 wrapper="$ROOT/bin/jg-jev-mem-guard.sh"
 python_guard="$ROOT/bin/jg-jev-mem-guard.py"
 out=$(bash "$wrapper")
+[[ "$out" == UNKNOWN$'\t'* ]] || fail "a read with no machine snapshot measured the host: $out"
+bash "$wrapper" --sample-home "$d" "$d/state" "$d/config" ''
+out=$(bash "$wrapper")
 [[ "$out" == OK$'\t'* ]] || fail "calm host was not OK: $out"
 printf 'some avg10=40 avg60=40 avg300=0 total=0\n' > "$app/memory.pressure"
+out=$(bash "$wrapper")
+[[ "$out" == OK$'\t'* ]] || fail "a diagnostic call resampled after the collector published: $out"
 if python3 "$python_guard" --admit sample --state "$d/state" > "$d/refusal"; then
   fail 'sustained pressure admitted a launch'
 fi
@@ -24,4 +30,9 @@ bash "$wrapper" --admit sample --state "$d/state" || fail 'calm host refused adm
 [ ! -e "$d/state/admission-refused" ] || fail 'stale refusal remained'
 bash "$wrapper" --record "$d/samples" > "$d/output"
 grep -q $'\tOK$' "$d/samples" || fail 'sample was not recorded as OK'
-pass 'memory guard admits and refuses synthetic host pressure and records a sample'
+cmp "$d/state/host-memory.tsv" "$d/samples" || fail 'the guard did not record the shared measurement'
+jq '.[0] = 0' "$JG_HOST_MEMORY_MACHINE_DIR/sample.json" > "$d/stale.json"
+mv "$d/stale.json" "$JG_HOST_MEMORY_MACHINE_DIR/sample.json"
+out=$(bash "$wrapper")
+[[ "$out" == UNKNOWN$'\t'* ]] || fail "an expired measurement was used or replaced by a private measurement: $out"
+pass 'memory guard reuses the machine snapshot for diagnostics and checks fresh pressure for admission'

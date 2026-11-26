@@ -1,0 +1,14 @@
+{"area": "muster", "owner": "m2c", "entries": [
+  {"path": ["muster", "objectives"], "meaning": "Run a project's objective journeys on the base (its base code with the head's journeys) and, with a head, on the head.",
+   "roles": ["overwatch"], "args": [{"name": "project", "type": "path", "required": true}, {"name": "base", "type": "ref", "required": true, "flag": "--base"}, {"name": "head", "type": "ref", "required": false, "flag": "--head"}],
+   "changes": false, "method": "GET", "form": "bin/jg-muster-objectives.sh objectives <project> --base <ref> [--head <ref>] [--spec <slug> | --change <slug>]",
+   "repeat_key": null, "exits": {"0": 0, "1": 1, "2": 2}, "schema": "muster.objectives.v1", "script": "bin/jg-muster-objectives.sh", "operation": "objectives", "aliases": []},
+  {"path": ["muster", "code"], "meaning": "Check that each behaviour the domain model names is defined in the module its core object lives in.",
+   "roles": ["overwatch"], "args": [{"name": "project", "type": "path", "required": true}],
+   "changes": false, "method": "GET", "form": "bin/jg-muster-objectives.sh code <project>",
+   "repeat_key": null, "exits": {"0": 0, "1": 1, "2": 2}, "schema": "muster.code.v1", "script": "bin/jg-muster-objectives.sh", "operation": "code", "aliases": []},
+  {"path": ["muster", "status"], "meaning": "Show where one ticket's muster stands, from the muster machine.",
+   "roles": ["overwatch"], "args": [{"name": "ticket", "type": "text", "required": true}],
+   "changes": false, "method": "GET", "form": "bin/jg-machine.sh show muster <ticket>",
+   "repeat_key": null, "exits": {"0": 0, "1": 1, "2": 2}, "schema": "muster.status.v1", "script": "bin/jg-machine.sh", "operation": "show muster", "aliases": []}
+]}

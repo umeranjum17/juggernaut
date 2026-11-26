@@ -1,15 +1,17 @@
 """advance <home> [--close-only] [--dry-run]: one quick pass over every open ticket that carries a workflow. It closes each
-finished step and starts each ready one as a detached job, and it never waits for an outside command.
+finished step and starts each ready one as a detached job.
 
   close   a step whose start record says rc 0 and whose kind's `result` is done: `bin/jg-backlog.sh done <row>`.
           Each `result` has 2 seconds; over that the step stays open and the pass logs `slow`.
-  failed  a start record with rc not 0, a start job gone with no record, or a result of `failed`: the step stays open, so
+  failed  a start record with rc not 0, a start job gone with no record, a result of `failed`, or a kind with no handler: the step stays open, so
           the stages after it stay blocked, and one `workflow-step-failed` alert is raised for it.
-  start   a step whose blockers are all closed and that has no data/workflows/<row>.started: write `.started`, launch
+  start   a step whose blockers are closed or have handed off to its kind, and that has no data/workflows/<row>.started: write `.started`, launch
           `bin/jg-workflow.sh step-start <home> <row>` with `detach`, print `started <row> (<kind>)`.
 
 The pass is safe to run twice at once (a second run leaves a mark and the first makes one more pass), to be killed (the kernel
-frees the lock) and to meet a slow step (its start runs in its own job). `--dry-run` prints and writes nothing."""
+frees the lock) and to meet a slow step (its start runs in its own job). `--dry-run` prints and writes nothing.
+The bounded dispatch caller sets JG_WORKFLOW_WAIT_FOR_STARTS=1 to wait for the starts this invocation requested before scanning
+approvals. This wait holds no workflow lock, and the jobs survive if the caller's timeout expires."""
 import argparse
 import fcntl
 import json
@@ -62,6 +64,7 @@ class Pass:
         self.data = kinds.data_dir(home)
         self.said = set()
         self.status = {}  # row id -> status, as read and as this pass changes it
+        self.starts = {}  # row id -> pid of a job launched by this invocation
 
     def path(self, row, suffix):
         return os.path.join(self.data, f"{row}.{suffix}")
@@ -115,7 +118,9 @@ class Pass:
             return self.say(f"would start {row} ({kind})")
         started = self.path(row, "started")
         kinds.write(started, f"{int(time.time())} {kind}\n")
-        _, pid = kinds.detach(self.home, row, "step-start", [os.path.join(store.ROOT, "bin", "jg-workflow.sh"), "step-start", self.home, row])
+        launched, pid = kinds.detach(self.home, row, "step-start", [os.path.join(store.ROOT, "bin", "jg-workflow.sh"), "step-start", self.home, row])
+        if launched:
+            self.starts[row] = pid
         kinds.write(started, f"{int(time.time())} {kind} {pid}\n")
         self.say(f"started {row} ({kind})")
 
@@ -152,9 +157,16 @@ class Pass:
             row, kind = r["id"], r["metadata"]["wf_kind"]
             if self.status[row] == "closed" or os.path.exists(self.path(row, "started")):
                 continue
-            if any(self.blocker_open(b) for b in blockers(r)):
+            pending = {b for b in blockers(r) if self.blocker_open(b)}
+            if pending and kind not in ("critic", "owner"):
                 continue
-            if self.module(kind) is None:
+            module = self.module(kind)
+            if pending:
+                unblocked = getattr(module, "unblocked", None)
+                if unblocked is None or not unblocked(self.home, r, rows, pending, self.dry):
+                    continue
+            if module is None:
+                self.fail(ticket, row, kind, f"no kind {kind}: the step has no handler, so nothing can start it")
                 continue
             self.start(row, kind)
 
@@ -194,6 +206,7 @@ def main():
     again = os.path.join(state, ".workflow-advance.again")
     work = Pass(a.home, a.close_only, a.dry_run)
     if a.dry_run:
+        os.environ["JG_WORKFLOW_DRY_RUN"] = "1"
         for t in tickets():
             work.ticket(t)
         return 0
@@ -212,6 +225,9 @@ def main():
                 break
         os.close(fd)
         fd = take(os.path.join(state, ".workflow-advance.lock")) if os.path.exists(again) else None
+    if os.environ.get("JG_WORKFLOW_WAIT_FOR_STARTS") == "1":
+        while any(not os.path.exists(work.path(row, "start.rc")) and kinds.alive(pid) for row, pid in work.starts.items()):
+            time.sleep(0.05)
     return 0
 
 

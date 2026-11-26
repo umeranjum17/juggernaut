@@ -119,6 +119,7 @@ post() { # post <hours>
   jq --arg key "$key" --arg project "${JG_REPORT_PROJECT:-Fleet}" --arg filed "$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ)" '
     def n($s): [.stuck[] | select(.bucket == $s)] | length;
     {contract: 1, kind: "report", schema: 5, filer: "fleet-report", key: $key, purpose: "status", filed: $filed,
+     actions: {role: "Fleet supervision", recommended: "approve"},
      project: $project, group: "Fleet report",
      title: "\(.merges_total) merges in \(.hours) h; \(.lanes.working) of \(.lanes.target // "?") lanes working",
      about: "\(.ready_not_started) ready items wait and \(.stuck | length) workers are stuck. \(.alerts.false_alarms) of \(.alerts.total) alerts were false alarms.",

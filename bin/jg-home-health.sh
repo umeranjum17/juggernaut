@@ -2,7 +2,7 @@
 # The health check of one home after a go-live, and the pin-back that undoes a bad move on the one home it broke.
 # Usage: jg-home-health.sh check <home> [<sha>] [--all | --before <file>] [--grace <s>] [--session-max <s>] [--wait <s>]
 #        jg-home-health.sh pinback <home> --project <name> --key <home-id> --reason <reason>
-#        jg-home-health.sh verify <home> <sha> --project <name> --key <home-id> [check options]
+#        jg-home-health.sh verify <home> <sha> --project <name> --key <home-id> [--all] [--before <file>] [--grace <s>] [--session-max <s>] [--wait <s>]
 #
 # check    Exit 0 and print `ok <home>`, or exit 1 and print the failed fact; the LAST line is `<reason>: <detail>`
 #          (bin/jg-update.sh --base reads it into the row). The facts, in order, and the first failure wins:

@@ -871,7 +871,7 @@ IFS= read -r -d '' INBOX_SECTION <<EOF || true
 # Juggernaut instruction inbox
 Juggernaut steers you through durable message files in $INBOX_DIR.
 When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list $INBOX_DIR/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: \`mv $INBOX_DIR/NNN.msg $INBOX_DIR/handled/\`.
-The move IS the acknowledgement: without it juggernaut rings again and eventually treats you as stuck. It proves only that you read the message. When you have acted on it, say so with proof: \`$(shell_quote "$JG_ROOT/bin/jg-delivery.sh") handled $ID NNN --evidence <status|commit|reply|task|pr>:<pointer>\` (or \`failed $ID NNN --reason <why>\` if you cannot). An empty or absent inbox needs no action.
+Use \`jg inbox\` to read instructions and \`jg inbox ack NNN --evidence <status|commit|reply|task|pr>:<pointer>\` after acting. If you cannot act, acknowledge it and run \`jg radio delivery failed $ID NNN --reason <why>\`. An empty or absent inbox needs no action.
 EOF
 if [ -e "$CONFIG/wait-no-turns" ]; then
   INBOX_SECTION+="Do not poll or list the inbox while waiting; a waiting instruction rings."$'\n'
@@ -980,6 +980,7 @@ For a detailed answer (an investigation, a plan, an audit), write it to a doc un
 Before treating an investigation or visual review as complete, load \`captain-hold-lifecycle\` from this home's \`.agents/skills/\` and pass its shared completion gate.
 A message with NO marker is the captain typing directly into your pane: treat it as authoritative captain intervention and stay conversational exactly as you would for any captain message; do not force it onto the status path.
 A request arriving through the instruction inbox below follows the same marker and reply rules.
+When you claim a steer that names your swarm lanes, add \`--action <lane> "<what you did>"\` after the evidence pointer for each named lane.
 
 $INBOX_SECTION
 
@@ -1095,13 +1096,13 @@ if [ "$DEPTH" != quick ]; then
 Recon depth: $DEPTH
 Read and follow \`$JG_ROOT/.agents/skills/deep-recon/SKILL.md\` for the stages, the source budget, the stop rules and the 13-section report template.
 Keep every stage file under \`$DATA/$ID/\`: \`brief-research.md\`, \`outline.md\`, \`sources.jsonl\`, \`claims.jsonl\`, \`checks.jsonl\`, \`critic.md\` and \`report.md\`.
-Before reporting done, run \`$JG_ROOT/bin/jg-recon-gate.sh $ID\` until it prints PASS; it refuses a \`done\` that skips the template, an unverified load-bearing claim, the critic or the source budget.
+Before reporting done, run \`jg proof recon-gate $ID\` until it prints PASS; it refuses a \`done\` that skips the template, an unverified load-bearing claim, the critic or the source budget.
 "
   if [ "$DEPTH" = deep ]; then
     DEPTH_SECTION="${DEPTH_SECTION}This is a deep Recon: you are the one researcher.
-After your draft report is complete, append \`done [at=<epoch>]: draft ready for the separate critic\` to the status file and stop; the gate lets that done through while only the critic is open, the ticket is then in its proving step critic, juggernaut dispatches one separate critic worker, and its \`critic.md\` is installed beside your report.
+After your draft report is complete, append \`done [at=<epoch>]: draft ready for the separate critic\` to the status file and stop; the gate lets that done through while only the critic is open, the ticket is then in its proving step critic, and the loop (core/recon-loop) starts one separate critic worker by itself, installs its \`critic.md\` beside your report and steers you with the gaps it finds.
 Never write \`critic.md\` yourself for a deep Recon; the gate refuses a critic that is you.
-Close every gap the critic finds, then run the gate again.
+Close every gap a steer names, run \`$JG_ROOT/bin/jg-recon-handoff.sh revise $ID\`, then append \`done [at=<epoch>]: draft ready for the separate critic\` again; the same critic reads the new draft, and the loop ends when it finds nothing new.
 "
   else
     DEPTH_SECTION="${DEPTH_SECTION}Write \`critic.md\` yourself: one round that reads the draft as a hostile reviewer, lists the gaps it found, and carries a \`Round 1: new gaps 0 report <sha256sum of report.md>\` line once they are closed (the hash names the draft it read; a later edit needs a new round).
@@ -1128,8 +1129,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 2. Stay inside this worktree; the only files you may write outside it are the report and the status file below.
    Never use git stash: all worktrees of a repo share one stash; commit work in progress on your own branch instead.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
-4. Report status by appending one line:
-   \`$STATUS_APPEND\`
+4. Report status with \`jg progress <text>\`, \`jg done [text]\`, \`jg wait <who> <reason> <text>\`, \`jg ask <question> --option <a> --option <b>\`, or \`jg status write <blocked|failed> [--key <key>] <text>\`.
    $STATES_LINE
    Substitute \`<epoch>\` with the current Unix time in seconds - run \`date +%s\` and write the number it printed; a stamp that is not plain digits records no time at all.
    Each append wakes juggernaut, so report sparingly: only phase changes a supervisor
@@ -1155,7 +1155,7 @@ The report must stand alone: what you did, what you found, the evidence (command
 The report's first section is \`## 1. Answer (five lines)\`: the answer to the owner's ask, in short plain sentences, with the evidence below it.
 $SIGNOFF_LINE
 A report page opens with that same Answer: put the first Answer line, in plain words and at most 30 words, in the picture heading (\`visual.heading\`), never a finding, a number or an example from the evidence.
-Before you post it and again before done, run \`$JG_ROOT/bin/jg-report-opening-check.sh $DATA/$ID/report.md --card <the report.json you post>\` until it prints PASS; teardown refuses a posted page that fails it.
+Before you post it and again before done, run \`jg report report-opening-check $DATA/$ID/report.md --card <the report.json you post>\` until it prints PASS; teardown refuses a posted page that fails it.
 If the report names three or more states or moving parts of the project, it must carry the project's state map: run \`$JG_ROOT/core/project-state-map/bin/psm-wide-check.sh $DATA/$ID/report.md --project $(basename "$REPO") --state $STATE --config $CONFIG\` and add the map card or a State map section; teardown refuses a wide report without it once the first week has passed.
 Before reporting done, read and follow \`$JG_ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.
 When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}\` to the status file and stop.
@@ -1333,8 +1333,7 @@ $RULE1
    Leave the worktree clean before reporting done.
    Never use git stash: all worktrees of a repo share one stash; commit work in progress on your own branch instead.
 3. $FORGE_RULE_LINE
-4. Report status by appending one line:
-   \`$STATUS_APPEND\`
+4. Report status with \`jg progress <text>\`, \`jg done [text]\`, \`jg wait <who> <reason> <text>\`, \`jg ask <question> --option <a> --option <b>\`, or \`jg status write <blocked|failed> [--key <key>] <text>\`.
    $STATES_LINE
    Substitute \`<epoch>\` with the current Unix time in seconds - run \`date +%s\` and write the number it printed; a stamp that is not plain digits records no time at all.
    Each append wakes juggernaut, so report sparingly: only phase changes a supervisor

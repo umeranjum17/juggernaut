@@ -2,7 +2,7 @@
 # jg-goal.sh - declare, show and cancel a Goal: an end state the system works toward until it is live.
 #
 # Usage: jg-goal.sh declare --ask <text> --repo <repo> [--released <how>] [--where <home or service>]
-#                           [--attempts <n>] [--fix-steps <n>] [--priority <0-4>] -- <proof argv...>
+#                           [--attempts <n>] [--fix-steps <n>] [--priority <0-4>] [--auto-ship] -- <proof argv...>
 #        jg-goal.sh show [<goal-id>]
 #        jg-goal.sh cancel <goal-id> --reason <text>
 #        jg-goal.sh rows
@@ -14,6 +14,8 @@
 #        jg-goal.sh proof-start <goal-id>
 #        jg-goal.sh prove <goal-id>
 #        jg-goal.sh proof-failed <goal-id> <exit code or lost>
+#        jg-goal.sh start-step <goal-id> <step-row>
+#        jg-goal.sh settle-step <goal-id> <step-row>
 #
 # A Goal is an epic labelled `goal` in this home's tickets tables, reached through
 # core/item-store/adapters/bd_compat.py (JG_GOAL_BEADS_BIN names another program for tests), and a row closes through
@@ -44,6 +46,14 @@
 # the only way a Goal reaches its finish. proof-failed keeps the log, reopens the row and adds a `fix` step. The
 # same failure (its exit code and the end of its log, digits aside) limits.attempts times running, or
 # limits.fix_steps fixes, makes a `limit` stop instead, and no fix step.
+# --auto-ship is the owner's word, given at declare, that the Goal's own ship and fix steps may start without a lead:
+# it sets metadata.goal.auto_ship, outside the finish line and its hash (it grants a start, it does not shrink the line).
+# start-step files the ticket for an open ship or fix row through bin/jg-worker-start.sh (the project is finish.repo;
+# the ticket carries the ask, the finish line and, for a fix, the last failed proof's log), takes the row (in_progress,
+# metadata.ticket) and prints the ticket. The dispatch check then starts the worker. It refuses a Goal declared without
+# --auto-ship, a row that is not an open ship or fix step, and a repeat after a cut run files nothing twice.
+# settle-step closes an in-progress ship or fix row whose ticket the trunk lander has landed (data/trunk-landings.tsv,
+# the lander's own record); with no landing it changes nothing and exits 4. A merge on a forge is not read here.
 # cancel closes the Goal's open rows and the epic on the owner's word. It tears nothing down and sends
 # no message, so unlanded work stays under the normal cleanup rules.
 set -u
@@ -84,7 +94,7 @@ proof_check() {  # <argv...>
 }
 
 declare_goal() {
-  local ask='' repo='' released=tag where='this home' attempts=3 fix_steps=5 priority=2 proof=() id step prev n meta finish hash dir made
+  local ask='' repo='' released=tag where='this home' attempts=3 fix_steps=5 priority=2 auto=false proof=() id step prev n meta finish hash dir made
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --ask) ask=${2-}; shift 2 || die "--ask needs a value" ;;
@@ -94,6 +104,7 @@ declare_goal() {
       --attempts) attempts=${2-}; shift 2 || die "--attempts needs a value" ;;
       --fix-steps) fix_steps=${2-}; shift 2 || die "--fix-steps needs a value" ;;
       --priority) priority=${2-}; shift 2 || die "--priority needs a value" ;;
+      --auto-ship) auto=true; shift ;;
       --) shift; proof=("$@"); break ;;
       *) die "declare: unknown argument $1" ;;
     esac
@@ -107,8 +118,8 @@ declare_goal() {
   finish=$(printf '%s\0' "${proof[@]}" | jq -Rs --arg repo "$repo" --arg released "$released" --arg where "$where" -Sc \
     '{repo:$repo, released:$released, where:$where, proof:(split("\u0000")[:-1])}')
   hash=$(printf '%s' "$finish" | sha_of)
-  meta=$(jq -nc --arg ask "$ask" --argjson finish "$finish" --arg hash "$hash" --argjson a "$attempts" --argjson f "$fix_steps" \
-    '{goal:{ask:$ask, finish:$finish, finish_hash:$hash, limits:{attempts:$a, fix_steps:$f}}}')
+  meta=$(jq -nc --arg ask "$ask" --argjson finish "$finish" --arg hash "$hash" --argjson a "$attempts" --argjson f "$fix_steps" --argjson auto "$auto" \
+    '{goal:{ask:$ask, finish:$finish, finish_hash:$hash, auto_ship:$auto, limits:{attempts:$a, fix_steps:$f}}}')
   id=$(goalstore create "Goal: $ask" -t epic --labels goal --priority "$priority" --metadata "$meta" --silent 2>/dev/null) \
     || die "the Goal store did not take the Goal"
   prev='' made=()
@@ -294,6 +305,65 @@ proof_failed() {
   fi
 }
 
+# A ship or fix row is the Goal's own work: the Goal's owner may let it start by itself (declare --auto-ship).
+start_step() {
+  local id=${1-} row=${2-} json rj kind title ticket project ask proof last body task spec dir out
+  [ -n "$id" ] && [ -n "$row" ] || die "start-step needs a Goal id and a step row"
+  need_store
+  json=$(goal_json "$id") && [ -n "$json" ] || die "no Goal $id"
+  [ "$(jq -r '.metadata.goal.auto_ship // false' <<< "$json")" = true ] || die "$id was not declared with --auto-ship, so no step starts without a lead"
+  rj=$(goal_json "$row") && [ -n "$rj" ] || die "no row $row"
+  kind=$(jq -r '.metadata.kind // ""' <<< "$rj")
+  case "$kind" in ship|fix) ;; *) die "$row is not a ship or fix step" ;; esac
+  [ "$(jq -r '.parent // ""' <<< "$rj")" = "$id" ] || die "$row is not a step of $id"
+  case "$(jq -r '.status' <<< "$rj")" in open|in_progress) ;; *) die "$row is not open" ;; esac
+  project=$(jq -r '.metadata.goal.finish.repo' <<< "$json")
+  ask=$(jq -r '.metadata.goal.ask' <<< "$json")
+  proof=$(jq -r '.metadata.goal.finish.proof | join(" ")' <<< "$json")
+  ticket=$(printf '%s-%s' "$id" "$(jq -r '.title' <<< "$rj")" | tr '[:upper:] .' '[:lower:]--' | tr -c 'a-z0-9\n-' - | sed -E 's/-+/-/g; s/-+$//')
+  title="Goal $kind: $(printf '%s' "$ask" | tr -c 'A-Za-z0-9 ' ' ' | awk '{ for (i = 1; i <= 4 && i <= NF; i++) printf "%s%s", (i > 1 ? " " : ""), $i }')"
+  dir=$DATA/goals/$id
+  last=$(printf '%s\n' "$dir"/proof-*.log | sort | tail -n 1); [ -f "$last" ] || last='' 
+  body=$(mktemp "${TMPDIR:-/tmp}/jg-goal-body.XXXXXX") || die "cannot stage the ticket files"
+  task=$(mktemp "${TMPDIR:-/tmp}/jg-goal-task.XXXXXX") || { rm -f -- "$body"; die "cannot stage the ticket files"; }
+  spec=$(mktemp "${TMPDIR:-/tmp}/jg-goal-spec.XXXXXX") || { rm -f -- "$body" "$task"; die "cannot stage the ticket files"; }
+  {
+    printf 'Captain: %s\n\nAsk: %s\n\n' "$ask" "$ask"
+    printf 'Why: Goal %s is declared with its ship and fix steps allowed to start without a lead; this is its %s step.\n\n' "$id" "$kind"
+    printf 'Done when: the Goal proof passes: %s\n\n' "$proof"
+    printf 'Acceptance Criteria: the %s step of %s is delivered and the proof above passes once the change runs where the Goal says.\n' "$kind" "$id"
+  } > "$body"
+  {
+    printf '%s\n\nThis is the %s step of Goal %s.\n' "$ask" "$kind" "$id"
+    printf 'The Goal is finished when this proof exits 0: %s\n' "$proof"
+    [ "$kind" != fix ] || [ -z "$last" ] || printf 'The last proof run failed; its log is %s\n' "$last"
+  } > "$task"
+  {
+    printf 'Build what the ask names, and nothing else, so the Goal proof passes. Stay inside the ask; note any follow-up in your report.\n'
+    [ "$kind" != fix ] || printf 'Read the failed proof log named above and fix its cause.\n'
+  } > "$spec"
+  out=$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-worker-start.sh" "$ticket" "$title" "$project" --body-file "$body" --task-file "$task" --spec-file "$spec" 2>&1)
+  local rc=$?
+  rm -f -- "$body" "$task" "$spec"
+  [ "$rc" = 0 ] || die "$(printf '%s' "$out" | tail -n 1)"
+  goalstore update "$row" --status in_progress --set-metadata "ticket=$ticket" >/dev/null 2>&1 || die "could not take $row"
+  printf 'started %s: ticket %s (%s)\n' "$row" "$ticket" "$out"
+}
+
+settle_step() {
+  local id=${1-} row=${2-} rj ticket commit
+  [ -n "$id" ] && [ -n "$row" ] || die "settle-step needs a Goal id and a step row"
+  need_store
+  rj=$(goal_json "$row") && [ -n "$rj" ] || die "no row $row"
+  [ "$(jq -r '.parent // ""' <<< "$rj")" = "$id" ] && [ "$(jq -r '.status' <<< "$rj")" = in_progress ] || die "$row is not an in-progress step of $id"
+  ticket=$(jq -r '.metadata.ticket // ""' <<< "$rj")
+  [ -n "$ticket" ] || return 4
+  commit=$(awk -F'\t' -v t="$ticket" '$1 == t { c = $3 } END { print c }' "$DATA/trunk-landings.tsv" 2>/dev/null)
+  [ -n "$commit" ] || return 4
+  close_row "$row" "landed $commit" || die "could not close $row"
+  printf 'landed %s: %s on the trunk as %s\n' "$row" "$ticket" "$commit"
+}
+
 cancel_goal() {
   local id=${1-} reason='' row
   [ -n "$id" ] || die "cancel needs a Goal id"
@@ -329,5 +399,7 @@ case "${1:-}" in
   proof-start) shift; proof_start "$@" ;;
   prove) shift; prove_goal "$@" ;;
   proof-failed) shift; proof_failed "$@" ;;
-  *) die "unknown verb $1 (declare, show, cancel, rows, stop, resume, notice, finish, proof-start, prove, proof-failed)" ;;
+  start-step) shift; start_step "$@" ;;
+  settle-step) shift; settle_step "$@" ;;
+  *) die "unknown verb $1 (declare, show, cancel, rows, stop, resume, notice, finish, proof-start, prove, proof-failed, start-step, settle-step)" ;;
 esac

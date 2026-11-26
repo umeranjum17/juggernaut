@@ -1,0 +1,670 @@
+{
+  "area": "landing",
+  "owner": "e6land1",
+  "entries": [
+    {
+      "path": [
+        "land",
+        "branch-prompt"
+      ],
+      "meaning": "Print the supervision branch prompt",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-branch-prompt.sh",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.branch-prompt.v1",
+      "script": "bin/jg-branch-prompt.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "check-live-pipeline"
+      ],
+      "meaning": "Check homes for active pipeline runs",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-check-live-pipeline.sh [home ...]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.check-live-pipeline.v1",
+      "script": "bin/jg-check-live-pipeline.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "ci-rerun"
+      ],
+      "meaning": "Rerun a CI run after its failure is explained",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-ci-rerun.sh <run-id> [--repo <owner/repo>] [--failed]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.ci-rerun.v1",
+      "script": "bin/jg-ci-rerun.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "config-push"
+      ],
+      "meaning": "Push inherited configuration to squad lead homes",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-config-push.sh [--help]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.config-push.v1",
+      "script": "bin/jg-config-push.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "forge-detect"
+      ],
+      "meaning": "Detect the forge for a local repository",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-forge-detect.sh <clone-dir>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.forge-detect.v1",
+      "script": "bin/jg-forge-detect.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "git-strip-ai-trailers",
+        "install"
+      ],
+      "meaning": "Install the commit trailer hook",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-git-strip-ai-trailers.sh install <hooks-dir> <worktree>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.git-strip-ai-trailers.install.v1",
+      "script": "bin/jg-git-strip-ai-trailers.sh",
+      "operation": "install",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "git-strip-ai-trailers",
+        "upstream-hooks"
+      ],
+      "meaning": "Find upstream hooks for a worktree",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-git-strip-ai-trailers.sh upstream-hooks <hooks-dir> <worktree>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.git-strip-ai-trailers.upstream-hooks.v1",
+      "script": "bin/jg-git-strip-ai-trailers.sh",
+      "operation": "upstream-hooks",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "git-strip-ai-trailers",
+        "refresh"
+      ],
+      "meaning": "Refresh the trailer hook environment",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-git-strip-ai-trailers.sh refresh <state-dir>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.git-strip-ai-trailers.refresh.v1",
+      "script": "bin/jg-git-strip-ai-trailers.sh",
+      "operation": "refresh",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "git-strip-ai-trailers",
+        "env-file"
+      ],
+      "meaning": "Write the trailer hook environment file",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-git-strip-ai-trailers.sh env-file <hooks-dir> <out-file>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.git-strip-ai-trailers.env-file.v1",
+      "script": "bin/jg-git-strip-ai-trailers.sh",
+      "operation": "env-file",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "live-lab",
+        "up"
+      ],
+      "meaning": "Start a disposable supervision lab",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-live-lab.sh up --harness <claude|pi> [--mate] [--worker] [--model <m>] [--effort <e>] [--supervision-host <line|none|off>] [--expect-host <yes|no>] [--source <repo>] [--ref <rev>] [--timeout <seconds>] [<lab-root>]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.live-lab.up.v1",
+      "script": "bin/jg-live-lab.sh",
+      "operation": "up",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "live-lab",
+        "check"
+      ],
+      "meaning": "Check a disposable supervision lab",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-live-lab.sh check <lab-root>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.live-lab.check.v1",
+      "script": "bin/jg-live-lab.sh",
+      "operation": "check",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "live-lab",
+        "say"
+      ],
+      "meaning": "Send text to a lab window",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-live-lab.sh say <lab-root> [--window <name>] <text>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.live-lab.say.v1",
+      "script": "bin/jg-live-lab.sh",
+      "operation": "say",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "live-lab",
+        "pane"
+      ],
+      "meaning": "Read a lab window",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-live-lab.sh pane <lab-root> [--window <name>] [--lines <n>]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.live-lab.pane.v1",
+      "script": "bin/jg-live-lab.sh",
+      "operation": "pane",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "live-lab",
+        "down"
+      ],
+      "meaning": "Stop a disposable supervision lab",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-live-lab.sh down <lab-root>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.live-lab.down.v1",
+      "script": "bin/jg-live-lab.sh",
+      "operation": "down",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "live-lab",
+        "claude-config"
+      ],
+      "meaning": "Prepare Claude configuration for a lab",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-live-lab.sh claude-config <dir>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.live-lab.claude-config.v1",
+      "script": "bin/jg-live-lab.sh",
+      "operation": "claude-config",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "merge-local"
+      ],
+      "meaning": "Land a local task",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-merge-local.sh <task-id>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.merge-local.v1",
+      "script": "bin/jg-merge-local.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "migration-live"
+      ],
+      "meaning": "Check migration readiness",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-migration-live.sh [--quiet] [--link] [<part>]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.migration-live.v1",
+      "script": "bin/jg-migration-live.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "post-merge-ci"
+      ],
+      "meaning": "Monitor CI after a merge",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-post-merge-ci.sh <task-id> <PR URL> <merged head>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.post-merge-ci.v1",
+      "script": "bin/jg-post-merge-ci.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "post-merge-ci",
+        "main"
+      ],
+      "meaning": "Monitor the main branch CI run",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-post-merge-ci.sh --main [--restore <project-dir>] [<workflow name>]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.post-merge-ci.main.v1",
+      "script": "bin/jg-post-merge-ci.sh",
+      "operation": "--main",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "pr-check"
+      ],
+      "meaning": "Check a task pull request",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-pr-check.sh <task-id> <pr-url>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.pr-check.v1",
+      "script": "bin/jg-pr-check.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "pr-check",
+        "from-status"
+      ],
+      "meaning": "Check a pull request from a task status",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-pr-check.sh --from-status <task-id>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.pr-check.from-status.v1",
+      "script": "bin/jg-pr-check.sh",
+      "operation": "--from-status",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "pr-merge"
+      ],
+      "meaning": "Merge a task pull request",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [--allow-orphans <words>] [-- <extra>...]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.pr-merge.v1",
+      "script": "bin/jg-pr-merge.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "pr-state"
+      ],
+      "meaning": "Show pull request blockers",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-pr-state.sh [--all] [--waiting-for] <pr-url>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.pr-state.v1",
+      "script": "bin/jg-pr-state.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "pr-wait",
+        "set"
+      ],
+      "meaning": "Set the pull request waiting status",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-pr-wait.sh <pr-url> set <line>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.pr-wait.set.v1",
+      "script": "bin/jg-pr-wait.sh",
+      "operation": "set",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "pr-wait",
+        "clear"
+      ],
+      "meaning": "Clear the pull request waiting status",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-pr-wait.sh <pr-url> clear [<line>]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.pr-wait.clear.v1",
+      "script": "bin/jg-pr-wait.sh",
+      "operation": "clear",
+      "aliases": []
+    },
+    {
+      "path": [
+        "land",
+        "trunk-live-home"
+      ],
+      "meaning": "Update a home to a trunk commit",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-trunk-live-home.sh <project-dir> <sha>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "land.trunk-live-home.v1",
+      "script": "bin/jg-trunk-live-home.sh",
+      "operation": "-",
+      "aliases": []
+    }
+  ]
+}

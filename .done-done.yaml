@@ -1,6 +1,43 @@
 app: juggernaut
 skill: .agents/skills/done-done-verify-suites
 journeys:
+  trunk-self-repair:
+    tier: local
+    command: bin/jg-lint.sh --changed-base HEAD^ > "$DONE_DONE_EVIDENCE_ROOT/lint.log" 2>&1 && bin/jg-test-run.sh tests/jg-trunk-self-repair.test.sh tests/jg-trunk-release-ci-watch.test.sh tests/jg-trunk-autorelease.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    timeout: 5m
+  dispatch-process-skills:
+    tier: local
+    command: bash tests/process-skills.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  dispatch-muster-council:
+    tier: local
+    command: bash tests/jg-muster-council.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  muster-discovery:
+    tier: local
+    command: bash tests/jg-muster-discover.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  muster-acceptance:
+    tier: local
+    command: bash tests/muster-acceptance.test.sh > "$DONE_DONE_EVIDENCE_ROOT/muster.log" 2>&1
+    timeout: 15m
+  muster-workflow:
+    tier: local
+    command: bash journeys/muster-workflow.sh
+    timeout: 10m
+  muster-requirements:
+    tier: local
+    command: bash tests/jg-muster-requirements.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  muster-technical-design:
+    tier: local
+    command: (bash bin/jg-lint.sh --changed-base HEAD^ && bash bin/jg-doc-audience-check.sh && bash bin/jg-test-run.sh tests/jg-muster-gate.test.sh tests/jg-muster-requirements.test.sh tests/muster-templates.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  muster-engineering-practices:
+    tier: local
+    command: bash journeys/muster-engineering-practices.sh
+  muster-use-cases:
+    tier: local
+    command: bin/jg-test-run.sh tests/*muster*.test.sh > "$DONE_DONE_EVIDENCE_ROOT/muster.log" 2>&1
+    timeout: 15m
+  agent-cli-contract:
+    tier: local
+    command: bash journeys/agent-cli-contract.sh
   signalled-status-outcomes:
     tier: local
     command: bash tests/jg-wake-next.test.sh > "$DONE_DONE_EVIDENCE_ROOT/outcomes.log" 2>&1 && bash tests/jg-wake-drain-status-ack.test.sh < /dev/null > "$DONE_DONE_EVIDENCE_ROOT/status-ack.log" 2>&1
@@ -20,6 +57,12 @@ journeys:
   hook-inbox:
     tier: local
     command: bash tests/jg-hook-inbox.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  swarm-blocked-lanes:
+    tier: local
+    command: bash journeys/swarm-blocked-lanes.sh
+  routed-captain-order:
+    tier: local
+    command: bash journeys/routed-captain-order.sh
   stage-words:
     tier: local
     command: bash journeys/stage-words.sh
@@ -54,6 +97,10 @@ journeys:
     tier: local
     command: bash journeys/home-summary-refresh-scale.sh
     timeout: 10m
+  contributions-watcher:
+    tier: local
+    command: bash journeys/contributions-watcher.sh
+    timeout: 3m
   hold-table:
     tier: local
     command: node journeys/hold-table.mjs
@@ -214,6 +261,9 @@ journeys:
   spawn-load-admission:
     tier: local
     command: bash tests/jg-spawn-load-admission.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  done-done-author-route:
+    tier: ci
+    command: bash journeys/done-done-author-route.sh
   tool-models:
     tier: local
     command: bash journeys/tool-models.sh
@@ -495,6 +545,9 @@ journeys:
     tier: local
     command: bash tests/jg-stack-owner.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
     timeout: 5m
+  decision-handler:
+    tier: local
+    command: bash core/decision-handler/tests/decision-handler.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   escalation-optimize:
     tier: local
     command: bash core/escalation-optimize/tests/jg-escalation-optimize.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -703,7 +756,7 @@ journeys:
     command: bash journeys/core-run.sh 'bash host-memory/tests/jg-host-memory-alert-routing.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   core-host-memory-shared-test:
     tier: local
-    command: bash journeys/core-run.sh 'bash host-memory/tests/jg-host-memory-shared.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"jg-host-memory-sampler.sh at this head"},"start":"two fixture homes, each with a live stand-in watcher, and no sampler running","steps":["start the sampler for the first home, then the second, through the lifecycle entry","read the sampler process each home records and each home samples","end the second home watcher and read the registry","stop the first home and read whether the sampler ends"],"result":"one process served both homes, each recorded its own samples, the home with no watcher was dropped, and the last stop ended the sampler"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+    command: bash journeys/core-run.sh 'bash host-memory/tests/jg-host-memory-shared.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"jg-host-memory-sampler.sh at this head"},"start":"three fixture homes with live stand-in watchers and independent thresholds","steps":["register three homes through the sampler lifecycle entry","compare the recorded measurements and verdicts across consecutive intervals","read the wake queue in each home","end a watcher and stop the last home"],"result":"all homes recorded the same single measurement per interval, only the home crossing its threshold queued a wake, the home with no watcher was dropped, and the last stop ended the sampler"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   core-route-change-test:
     # was Core suites step 12: Route change test
     tier: local
@@ -1289,6 +1342,9 @@ journeys:
   jg-codex-held-wake:
     tier: local
     command: bash tests/jg-codex-held-wake.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  idle-worker-redrive:
+    tier: local
+    command: bash tests/jg-idle-redrive.test.sh
   jg-codex-hook-layer-live-e2e:
     tier: local
     command: bash tests/jg-codex-hook-layer-live-e2e.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1444,6 +1500,9 @@ journeys:
   jg-prompt-gate:
     tier: local
     command: bash tests/jg-prompt-gate.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-autocompact-offer:
+    tier: local
+    command: bash tests/jg-autocompact-offer.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-proof-attach:
     tier: local
     command: bash tests/jg-proof-attach.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -2008,6 +2067,18 @@ journeys:
   jg-ask-record:
     tier: local
     command: bash journeys/ask-record.sh
+  jg-workflow-kinds:
+    tier: local
+    command: bash tests/jg-workflow-kinds.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-workflow-worker:
+    tier: local
+    command: bash tests/jg-workflow-worker.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-workflow-advance:
+    tier: local
+    command: bash tests/jg-workflow-advance.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-workflow-war-room:
+    tier: local
+    command: bash tests/jg-workflow-war-room.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-acceptance-trial:
     tier: local
     command: bash tests/jg-acceptance-trial.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -2074,6 +2145,19 @@ journeys:
   jg-turnend-guard:
     tier: local
     command: bash tests/jg-turnend-guard.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  finished-work-never-silently-acknowledged:
+    tier: local
+    command: bash tests/jg-finished-work.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  recon-critic-version:
+    tier: local
+    command: bash tests/jg-recon-critic-version.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  deep-recon-loop-advances-by-itself:
+    tier: local
+    command: bash tests/jg-recon-loop.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    timeout: 15m
+  loop-stall-alert:
+    tier: local
+    command: bash tests/jg-loop-stall.test.sh > "$DONE_DONE_EVIDENCE_ROOT/loop-stall.log" 2>&1
   jg-update-local-base:
     tier: local
     command: bash tests/jg-update-local-base.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -2302,6 +2386,10 @@ journeys:
   tickets-beads-checks:
     tier: local
     command: node journeys/tickets-beads-checks.mjs
+
+  lead-queue-drain:
+    tier: local
+    command: bash tests/jg-lead-queue-drain.test.sh
 
   codex-lead-queued-wake:
     tier: local

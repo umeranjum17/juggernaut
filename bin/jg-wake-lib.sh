@@ -126,6 +126,34 @@ jg_path_age() {
   echo $(( now - m ))
 }
 
+# Spread a periodic job over a bounded window using the home as its stable seed.
+jg_home_timer_offset() {  # <home> <window in seconds>
+  local sum
+  read -r sum _ < <(printf '%s' "$1" | cksum) || sum=0
+  printf '%s\n' "$((sum % ($2 + 1)))"
+}
+
+# Repair recurs in home-specific slots. Homes with lane records keep the
+# sentinel's one-minute cadence for lease renewal and timed worker stops.
+jg_delivery_timer_due() {  # <home>
+  local last now age offset period=120
+  last=$(jg_path_mtime "$1/state/.last-delivery-tick") || return 0
+  jg_epoch_seconds_to now
+  age=$((now - last))
+  if [ "$age" -ge 120 ] || [ "$age" -lt 0 ]; then return 0; fi
+  [ "$age" -ge 30 ] || return 1
+  if compgen -G "$1/state/*.meta" >/dev/null; then period=60; fi
+  [ "$age" -lt "$period" ] || return 0
+  [ "$age" -ge "$((period / 2))" ] || return 1
+  offset=$(jg_home_timer_offset "$1" "$((period - 1))")
+  [ "$(((now + offset) / period))" -ne "$(((last + offset) / period))" ]
+}
+
+# The delivery entry rechecks this with the per-home lock held.
+jg_delivery_repair_due() {  # <home>
+  [ -e "$1/state/.delivery-tick.again" ] || jg_delivery_timer_due "$1"
+}
+
 jg_watcher_child_identity() {
   local identity
   jg_watcher_child_identity_to identity "$1" || return 1
@@ -1255,64 +1283,9 @@ _jg_recovery_marker_reopen_announced() {
   jg_lock_release "$JG_WAKE_QUEUE_LOCK"
 }
 
-# The handover rule for a watcher stopped by bin/jg-watch-arm.sh --take-over
-# (docs/watcher-continuity.md "Generation reuse" owns it). The snapshot reads
-# the marker token and the queue's append sequence under both locks before the
-# stop; handover-restore puts an acknowledged token back only while that
-# sequence is unchanged and the marker reads the fresh pending downtime the
-# stopped watcher's own close published.
-JG_RECOVERY_HANDOVER_TOKEN=
-JG_RECOVERY_HANDOVER_SEQ=
-jg_recovery_marker_handover_snapshot() {  # <marker>
-  local marker=$1 lock
-  JG_RECOVERY_HANDOVER_TOKEN=
-  JG_RECOVERY_HANDOVER_SEQ=
-  lock="${marker}.lock"
-  jg_lock_acquire_wait "$JG_WAKE_QUEUE_LOCK" || return 1
-  if ! jg_lock_acquire_wait "$lock"; then
-    jg_lock_release "$JG_WAKE_QUEUE_LOCK"
-    return 1
-  fi
-  if jg_recovery_marker_read "$marker"; then
-    # shellcheck disable=SC2034 # Read by callers after this function returns.
-    JG_RECOVERY_HANDOVER_TOKEN=$JG_RECOVERY_MARKER_TOKEN
-  fi
-  # shellcheck disable=SC2034 # Read by callers after this function returns.
-  JG_RECOVERY_HANDOVER_SEQ=$(awk -F '\t' 'NF >= 5 { last = $2 } END { print last + 0 }' "$JG_WAKE_QUEUE" 2>/dev/null)
-  jg_lock_release "$lock"
-  jg_lock_release "$JG_WAKE_QUEUE_LOCK"
-}
-
-_jg_recovery_marker_handover_restore() {
-  local marker=$1 token=$2 seq=$3 lock status=0
-  case "$token" in acked:*) ;; *) return 0 ;; esac
-  lock="${marker}.lock"
-  jg_lock_acquire_wait "$JG_WAKE_QUEUE_LOCK" || return 1
-  if ! jg_lock_acquire_wait "$lock"; then
-    jg_lock_release "$JG_WAKE_QUEUE_LOCK"
-    return 1
-  fi
-  if [ "$(awk -F '\t' 'NF >= 5 { last = $2 } END { print last + 0 }' "$JG_WAKE_QUEUE" 2>/dev/null)" = "$seq" ] \
-    && jg_recovery_marker_read "$marker"; then
-    case "$JG_RECOVERY_MARKER_TOKEN" in
-      pending:downtime:*)
-        if [ "${JG_RECOVERY_MARKER_TOKEN##*:}" != "${token##*:}" ]; then
-          _jg_recovery_marker_restore_token_locked "$marker" "$token" || status=1
-        fi
-        ;;
-    esac
-  fi
-  jg_lock_release "$lock"
-  jg_lock_release "$JG_WAKE_QUEUE_LOCK"
-  return "$status"
-}
-
 jg_recovery_transition() {
   local marker=$1 action=$2 target=${3:-} value=${4:-} bound=${5:-}
   case "$action" in
-    handover-restore)
-      _jg_recovery_marker_handover_restore "$marker" "$target" "$value"
-      ;;
     publish)
       _jg_recovery_marker_publish "$marker" "${target:-downtime}" "$bound"
       ;;
@@ -1372,10 +1345,6 @@ jg_recovery_marker_arm_check() {
 
 jg_recovery_marker_reopen_announced() {
   jg_recovery_transition "$1" reopen-announced
-}
-
-jg_recovery_marker_handover_restore() {  # <marker> <snapshot-token> <snapshot-seq>
-  jg_recovery_transition "$1" handover-restore "$2" "$3"
 }
 
 # jg_lock_reap_dead_link <lockdir>
@@ -2045,31 +2014,87 @@ jg_treehouse_project_lock_path() {  # <project-dir>
 # this function wrote for an older root (<home>/.treehouse-pool or the home's
 # git directory) is moved; live slots under that root stay found because slot
 # detection reads each pool's own state.
+# The pool cap also follows the home's lane limit (core/pool-reserve/reserve.sh
+# limit = lane limit + reserved red-fix copies; Treehouse defaults to 16 when
+# max_trees is absent): whenever a home has a lane limit whose copy cap exceeds
+# the pool's current effective max_trees, both the root home and Squad Lead
+# homes write or raise max_trees in the project's untracked treehouse.toml and
+# exclude /treehouse.toml in .git/info/exclude. A higher hand-set max_trees
+# stays untouched, and a git-tracked treehouse.toml is never dirtied.
 jg_treehouse_clone_pool_prepare() {  # <project-dir>
   local project=$1 home root top gitdir toml pool_root exclude key old_toml
+  local reserve want cur eff wrote=0 tmp_toml
   [ -d "$project" ] || return 1
   home=$(CDPATH='' cd -- "$JG_HOME" 2>/dev/null && pwd -P) || return 1
   root=$(jg_juggernaut_root_home "$home") || return 1
-  [ "$home" != "$root" ] || return 0
+  reserve="$JG_WAKE_DEFAULT_ROOT/core/pool-reserve/reserve.sh"
+  if [ -x "$reserve" ]; then
+    want=$("$reserve" limit "$home" 2>/dev/null)
+  else
+    want=$(awk 'NF && $1 ~ /^[0-9]+$/ { print $1 + 2; exit }' "$home/config/lane-target" 2>/dev/null)
+  fi
+  case "$want" in ''|*[!0-9]*|0) want= ;; esac
+  if [ "$home" = "$root" ] && [ -z "$want" ]; then
+    return 0
+  fi
   top=$(git -C "$project" rev-parse --show-toplevel 2>/dev/null) || return 1
   toml="$top/treehouse.toml"
-  key=$(printf '%s' "$home" | git hash-object --stdin 2>/dev/null) || return 1
-  pool_root="${JG_WORKER_POOL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/juggernaut-worker-pools}/$(basename "$home")-${key:0:12}"
-  gitdir=$(git -C "$home" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-  if [ -e "$toml" ] || [ -L "$toml" ]; then
-    [ ! -L "$toml" ] || return 0
-    old_toml=$(cat "$toml" 2>/dev/null)
-    case "$old_toml" in
-      "root = \"$home/.treehouse-pool\""|"root = \"$gitdir/treehouse-pool\"") ;;
-      *) return 0 ;;
-    esac
+  [ ! -L "$toml" ] || return 0
+  if [ "$home" != "$root" ]; then
+    key=$(printf '%s' "$home" | git hash-object --stdin 2>/dev/null) || return 1
+    pool_root="${JG_WORKER_POOL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/juggernaut-worker-pools}/$(basename "$home")-${key:0:12}"
+    gitdir=$(git -C "$home" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+    if [ ! -e "$toml" ]; then
+      mkdir -p "$pool_root" || return 1
+      printf 'root = "%s"\n' "$pool_root" > "$toml" || return 1
+      wrote=1
+    else
+      old_toml=$(cat "$toml" 2>/dev/null)
+      case "$old_toml" in
+        "root = \"$home/.treehouse-pool\""|"root = \"$gitdir/treehouse-pool\"")
+          mkdir -p "$pool_root" || return 1
+          printf 'root = "%s"\n' "$pool_root" > "$toml" || return 1
+          wrote=1
+          ;;
+      esac
+    fi
   fi
-  mkdir -p "$pool_root" || return 1
-  printf 'root = "%s"\n' "$pool_root" > "$toml" || return 1
-  gitdir=$(git -C "$project" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-  exclude="$gitdir/info/exclude"
-  mkdir -p "$gitdir/info" || return 1
-  grep -qxF '/treehouse.toml' "$exclude" 2>/dev/null || printf '/treehouse.toml\n' >> "$exclude" || return 1
+  if [ -n "$want" ] && ! git -C "$top" ls-files --error-unmatch treehouse.toml >/dev/null 2>&1; then
+    cur=
+    if [ -f "$toml" ]; then
+      cur=$(awk -F= '
+        /^[[:space:]]*\[/ { exit }
+        /^[[:space:]]*max_trees[[:space:]]*=/ {
+          v = $2; gsub(/#.*$/, "", v); gsub(/[[:space:]]/, "", v); print v; exit
+        }' "$toml" 2>/dev/null)
+    fi
+    eff=${cur:-16}
+    case "$eff" in ''|*[!0-9]*) eff=0 ;; esac
+    if [ "$eff" -lt "$want" ]; then
+      tmp_toml=$(mktemp "$top/.treehouse.toml.XXXXXX") || return 1
+      if [ -f "$toml" ] && [ -n "$cur" ]; then
+        awk -v want="$want" '
+          !in_sec && /^[[:space:]]*\[/ { in_sec = 1 }
+          !done && !in_sec && /^[[:space:]]*max_trees[[:space:]]*=/ {
+            print "max_trees = " want; done = 1; next
+          }
+          { print }
+        ' "$toml" > "$tmp_toml" || { rm -f -- "$tmp_toml"; return 1; }
+      elif [ -f "$toml" ]; then
+        { printf 'max_trees = %s\n' "$want"; cat "$toml"; } > "$tmp_toml" || { rm -f -- "$tmp_toml"; return 1; }
+      else
+        printf 'max_trees = %s\n' "$want" > "$tmp_toml" || { rm -f -- "$tmp_toml"; return 1; }
+      fi
+      mv -f -- "$tmp_toml" "$toml" || { rm -f -- "$tmp_toml"; return 1; }
+      wrote=1
+    fi
+  fi
+  if [ "$wrote" -eq 1 ]; then
+    gitdir=$(git -C "$project" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+    exclude="$gitdir/info/exclude"
+    mkdir -p "$gitdir/info" || return 1
+    grep -qxF '/treehouse.toml' "$exclude" 2>/dev/null || printf '/treehouse.toml\n' >> "$exclude" || return 1
+  fi
 }
 
 # A Treehouse slot has the managed pool's fixed <pool>/<slot>/<repo> layout.

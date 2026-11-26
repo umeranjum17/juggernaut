@@ -15,6 +15,9 @@
 # local parent home. Every other prompt, including Claude, Pi, omp and Gemini
 # trust dialogs (jg_busy_launch_prompt_parked), is left unanswered and rides the
 # wait-timers escalation chain (core/wait-timers/README.md).
+# The one exception is Claude's autocompact offer (jg-3uo): a modal that parks a
+# running worker's turn until answered, whose Esc keeps the window unchanged, so
+# the verdict is `dismiss` and the watcher sends that one key.
 # config/prompt-approve-off turns approval off; rejection stays on.
 # Every approval is one JSON line in state/prompt-approvals.jsonl, which
 # bin/jg-fleet-snapshot.sh publishes and bin/jg-fleet-view.sh renders.
@@ -32,7 +35,7 @@ jg_prompt_gate_harness() {  # <harness>
 }
 
 # jg_prompt_gate_verdict: read a pane capture on stdin and print the gate's
-# verdict line (approve|reject|card <TAB> ...), or nothing when no prompt is
+# verdict line (approve|reject|dismiss|card <TAB> ...), or nothing when no prompt is
 # visible. A matcher that cannot run is a card, never silence.
 jg_prompt_gate_verdict() {  # <harness> <home> <state> <config> <task> <meta>
   local harness=$1 home=$2 state=$3 config=$4 task=$5 meta=$6 buf out wt lead parent h path prompt
@@ -64,6 +67,14 @@ jg_prompt_gate_verdict() {  # <harness> <home> <state> <config> <task> <meta>
       printf '%s\n' "$out"
       ;;
     *)
+      case "$harness" in
+        claude*)
+          if printf '%s' "$buf" | jg_busy_claude_autocompact_offer_tail; then
+            printf 'dismiss\tthe offer to lower the auto-compact window keeps the window on Esc\t-\tclaude autocompact offer\n'
+            return 0
+          fi
+          ;;
+      esac
       printf '%s' "$buf" | jg_busy_launch_prompt_parked "$harness" || return 0
       printf 'card\ta trust dialog is never auto-approved\t-\t%s launch trust dialog\n' "$harness"
       ;;

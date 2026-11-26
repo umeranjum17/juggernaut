@@ -375,29 +375,6 @@ publish_pending() { # task canonical-url record-file
   done < <(jq -r '. as $r | .pending[] | .token | select(. as $t | ($r.notified // [] | index($t)) == null)' "$record")
 }
 
-settle_final() { # canonical-url task... : copy the URL's final observation to every owner
-  local url=$1 task
-  shift
-  jq -n --slurpfile saved "$TMP/saved.json" --arg url "$url" '
-    [$saved[0][] | .records[] | select(.url == $url
-      and (.observation.state | IN("merged","closed")))] as $final
-    | $final | sort_by([.retired != null, .error != null]) | first' > "$TMP/final.json"
-  for task in "$@"; do
-    jg_pr_task_id_valid "$task" || { printf 'contributions: invalid durable task id\n'; continue; }
-    jq -n --slurpfile saved "$TMP/saved.json" --arg task "$task" --arg url "$url" '
-      [$saved[0][] | select(.task == $task) | .records[] | select(.url == $url)] | first' > "$TMP/old.json"
-    if jq -e '. == null' "$TMP/old.json" >/dev/null; then
-      jq -n --slurpfile final "$TMP/final.json" '
-        $final[0] + {error:null,pending:[],notified:[]} | del(.retired)' > "$TMP/row.json"
-      write_record "$task" "$TMP/row.json"
-    elif jq -e '(.observation.state | IN("merged","closed") | not) or .error != null' "$TMP/old.json" >/dev/null; then
-      jq -n --slurpfile final "$TMP/final.json" --slurpfile old "$TMP/old.json" '
-        $old[0] + {observation:$final[0].observation,checked_at:$final[0].checked_at,error:null}' > "$TMP/row.json"
-      write_record "$task" "$TMP/row.json"
-    fi
-  done
-}
-
 clear_unsupported_errors() {
   local task url
   while IFS=$'\t' read -r task url; do
@@ -412,35 +389,26 @@ clear_unsupported_errors() {
 }
 
 poll() {
-  local task url old kind error observed
+  local task url old kind error observed record
   local -a row
   acquire
   get_input
   read_saved
   [ "$ERRORS" -eq 0 ] || printf 'contributions: %s unreadable durable record(s)\n' "$ERRORS"
   clear_unsupported_errors
-  # Only supported URLs enter final settlement and the forge-read rotation.
-  # One line per distinct URL: the URL, then every owning task.
-  jq_lib -nr --slurpfile input "$TMP/input.json" --slurpfile saved "$TMP/saved.json" '
-    known($input[0];$saved[0]) | map(select(.url | supported_url))
-    | group_by(.url) | map({url:.[0].url,tasks:(map(.task) | unique)})
-    | .[] | [.url] + .tasks | @tsv' > "$TMP/known.tsv"
-  : > "$TMP/live.tsv"
-  while IFS=$'\t' read -r -a row; do
-    [ "${#row[@]}" -ge 2 ] || continue
-    url=${row[0]}
-    # A contribution with a final observation is not re-read for any owner.
-    if jq -ne --slurpfile saved "$TMP/saved.json" --arg url "$url" --args \
-      'any($ARGS.positional[] as $task | [$saved[0][] | select(.task == $task) | .records[] | select(.url == $url)] | first;
-        . != null and (.observation.state | IN("merged","closed")))' "${row[@]:1}" >/dev/null; then
-      settle_final "$url" "${row[@]:1}"
-    else
-      (IFS=$'\t'; printf '%s\n' "${row[*]}") >> "$TMP/live.tsv"
-    fi
-  done < "$TMP/known.tsv"
-  jq -Rnr --argjson bucket "$((EPOCH / 300))" '
-    [inputs] | if length == 0 then . else ($bucket % length) as $offset | .[$offset:] + .[:$offset] end
-    | .[]' < "$TMP/live.tsv" > "$TMP/known.tsv"
+  jq_lib -nc --slurpfile input "$TMP/input.json" --slurpfile saved "$TMP/saved.json" \
+    'poll_plan($input[0];$saved[0])' > "$TMP/plan.json"
+  # Escape task IDs as TSV, but leave each compact JSON record intact.
+  jq -r '.[] | .updates[]? | ([.task] | @tsv) + "\t" + (.record | tojson)' "$TMP/plan.json" > "$TMP/final.tsv"
+  while IFS=$'\t' read -r task record; do
+    jg_pr_task_id_valid "$task" || { printf 'contributions: invalid durable task id\n'; continue; }
+    printf '%s\n' "$record" > "$TMP/row.json"
+    write_record "$task" "$TMP/row.json"
+  done < "$TMP/final.tsv"
+  # Rotate live URLs only. Each line carries the URL and every owning task.
+  jq -r --argjson bucket "$((EPOCH / 300))" '
+    [.[] | .live // empty] | if length == 0 then . else ($bucket % length) as $offset | .[$offset:] + .[:$offset] end
+    | .[] | @tsv' "$TMP/plan.json" > "$TMP/live.tsv"
   DEADLINE=$(( $(date +%s) + BUDGET ))
   OBSERVATION_RESERVE=$((BUDGET < 15 ? BUDGET : 15))
   while IFS=$'\t' read -r -a row; do
@@ -479,7 +447,7 @@ poll() {
       write_record "$task" "$TMP/row.json"
       publish_pending "$task" "$url" "$TMP/row.json"
     done
-  done < "$TMP/known.tsv"
+  done < "$TMP/live.tsv"
 }
 
 arm() {

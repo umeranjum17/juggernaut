@@ -27,7 +27,7 @@
 # so it does not call jg-guard.sh. No brief calls it: the sections it inserts
 # and the pointer it creates are additions, and AGENTS.md section 6 bounds
 # operator edits of project memory files to correcting the wrong text only.
-# Usage: jg-ensure-agents-md.sh [repo-or-worktree-dir]
+# Usage: jg-ensure-agents-md.sh [<repo-or-worktree-dir>]
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -52,7 +52,7 @@ unset _jg_d
 set -eu
 
 usage() {
-  echo "usage: jg-ensure-agents-md.sh [repo-or-worktree-dir]" >&2
+  echo "usage: jg-ensure-agents-md.sh [<repo-or-worktree-dir>]" >&2
   cat >&2 <<'EOF'
 
 To retain equivalent project-owned maintenance guidance without adding the

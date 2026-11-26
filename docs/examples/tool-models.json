@@ -11,6 +11,14 @@
       "why": "Edit this entry to move every new Squad Lead launch to another model."
     },
     {
+      "tool": "done-done-author",
+      "when": "Write or improve a done-done journey.",
+      "use": [
+        { "harness": "codex", "model": "gpt-6.1-terra", "effort": "medium" },
+        { "harness": "codex", "model": "gpt-6.2-sol", "effort": "high" }
+      ]
+    },
+    {
       "tool": "done-done-judge",
       "when": "Which model judges the Evidence card.",
       "use": [
@@ -42,6 +50,12 @@
       "when": "Which Bedrock model answers a side question. Add inbox-stt and voice-relay the same way.",
       "use": { "harness": "pi", "model": "amazon-bedrock/your-model-id" },
       "why": "These models run on Bedrock, so the harness is pi and the model carries the amazon-bedrock/ prefix."
+    },
+    {
+      "tool": "recon-critic",
+      "when": "Which model is the separate critic of a deep Recon. The built-in default is agy with gemini-4-neon-high.",
+      "use": { "harness": "agy", "model": "gemini-4-neon-high" },
+      "why": "A critic from another model family than the researcher does not share its blind spots. data/<recon>/critic-profile wins for one Recon."
     },
     {
       "tool": "route-chain",

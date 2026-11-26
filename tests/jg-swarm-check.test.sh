@@ -41,6 +41,7 @@ status() { run "$M" env JG_SWARM_NOW="$now" "$CHECK" status "$@"; }
 add "$M" jg-plan "Run the plan as swarm"; add "$L" jg-plan "Run the plan as swarm"
 for s in a b c d e; do add "$M" "jg-plan-$s" "Build part $s of it"; done
 add "$L" jg-plan-f "Build part f of it"
+add "$L" jg-plan-g "Build part g of it"
 for h in "$M" "$L"; do add "$h" jg-plan-word-f "Owner pick before slice"; done
 for h in "$M" "$L"; do
   run "$h" "$ROOT/bin/jg-captain-hold.sh" design-card card-1 --raised-by jg-plan-word-f --title "Which colour should the button be?" > /dev/null
@@ -62,12 +63,53 @@ arm "$L" lead off absent null '["jg-plan-f"]'
 printf 'on\n' > "$L/config/auto-dispatch"
 
 # a) status
-check "status long" "$(status)" "jg-plan: 0/6 landed, 0 working, 6 queued (1 wait for the owner), started 0h00m ago"
-check "status short" "$(status jg-plan --short)" "jg-plan 0/6 landed, 0 working, 1 wait for the owner"
+check "status long" "$(status)" "jg-plan: 0/6 landed, 0 running, 0 waiting, 6 queued, started 0h00m ago
+  a (jg-plan-a): queued; dependencies: -
+  b (jg-plan-b): queued; dependencies: -
+  c (jg-plan-c): queued; dependencies: -
+  d (jg-plan-d): queued; dependencies: -
+  e (jg-plan-e): queued; dependencies: -
+  f (jg-plan-f): queued; dependencies: -"
+check "status short" "$(status jg-plan --short)" "jg-plan: 0/6 landed, 0 running, 0 waiting, 6 queued"
 check "status of another plan" "$(status nothing)" "no swarm is running"
 mv "$P/swarm.json" "$P/swarm.off"
 check "status with no record" "$(status)" "no swarm is running"
 mv "$P/swarm.off" "$P/swarm.json"
+
+# Current worker states override historical blocked lines; queued and landed remain distinct.
+C=$T/current
+mkhome "$C"
+add "$C" jg-current "Current state plan"
+for r in run wait queued landed; do add "$C" "jg-current-$r" "Build part $r"; done
+for r in run wait; do run "$C" "$ROOT/bin/jg-backlog.sh" start "jg-current-$r" > /dev/null; done
+done_ "$C" jg-current-landed
+printf 'jg-current-landed\tproj\tfixture-commit\t%s\tfixture\n' "$now" > "$C/data/trunk-landings.tsv"
+mkdir -p "$C/data/swarm/jg-current" "$T/fakebin" "$C/wt"
+jq -n --arg h "$C" '{main_home:$h, owner_homes:{main:$h}, slices:[
+  {id:"run", row:"jg-current-run", owner_home:"main"},
+  {id:"wait", row:"jg-current-wait", owner_home:"main"},
+  {id:"queued", row:"jg-current-queued", owner_home:"main", depends_on:["wait"]},
+  {id:"landed", row:"jg-current-landed", owner_home:"main"}]}' > "$C/data/swarm/jg-current/plan.json"
+jq -n --argjson t "$now" '{state:"running", started_at:$t}' > "$C/data/swarm/jg-current/swarm.json"
+cat > "$T/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case ${1:-} in display-message) printf '%%1\n' ;; capture-pane) printf 'fixture pane\n' ;; esac
+SH
+chmod +x "$T/fakebin/tmux"
+for r in run wait; do
+  jg_write_meta "$C/state/jg-current-$r.meta" "window=fm:jg-current-$r" "worktree=$C/wt" "kind=ship" "harness=claude"
+  gen=$("$ROOT/bin/jg-busy-event.sh" arm "$C/state" "jg-current-$r")
+  if [ "$r" = run ]; then busy=busy; event=prompt; else busy=idle; event=stop; fi
+  "$ROOT/bin/jg-busy-event.sh" apply "$C/state" "jg-current-$r" "$busy" --gen "$gen" --source claude-hook --event "$event"
+  printf 'blocked [at=%s] [key=fixture]: waiting for base\n' "$((now - 700))" > "$C/state/jg-current-$r.status"
+done
+out=$(PATH="$T/fakebin:$PATH" run "$C" env JG_SWARM_NOW="$now" "$CHECK" status jg-current)
+case $out in *'1/4 landed, 1 running, 1 waiting, 1 queued'*) say 'ok: live states split the summary' ;; *) say "FAIL: live states: $out"; fails=$((fails + 1)) ;; esac
+case $out in *'run (jg-current-run): running now'*'wait (jg-current-wait): waiting; waiting for base'*'queued (jg-current-queued): queued; dependencies: wait'*'landed (jg-current-landed): landed'*) say 'ok: live states name each lane' ;; *) say "FAIL: lane details: $out"; fails=$((fails + 1)) ;; esac
+PATH="$T/fakebin:$PATH" chk "$C" "$now" > /dev/null
+check "only the idle blocked lane alerts" "$(run "$C" "$ROOT/bin/jg-alert.sh" list)" fleet-blocked--swarm-lane-jg-current-wait
+PATH="$T/fakebin:$PATH" chk "$C" "$now" > /dev/null
+check "the idle blocker alerts once" "$(grep -Fc fleet-blocked--swarm-lane-jg-current-wait "$C/state/.wake-queue" 2> /dev/null || true)" 1
 
 # b) stall: nothing in flight 31 minutes after the last change; a row in flight keeps it quiet
 check "the first beat is quiet" "$(chk "$M")" ""
@@ -78,19 +120,91 @@ case $out in *"swarm jg-plan: no slice moved for 31 min; open: jg-plan-a (no bri
 check "a second beat is quiet" "$(chk "$M" $((now + 1900)))" ""
 run "$M" "$ROOT/bin/jg-backlog.sh" start jg-plan-b > /dev/null
 check "one row in flight is quiet" "$(chk "$M" $((now + 4000)))" ""
-check "status counts the row in flight" "$(status --short)" "jg-plan 0/6 landed, 1 working, 1 wait for the owner"
+check "status identifies a row without a lane" "$(status --short)" "jg-plan: 0/6 landed, 0 running, 0 waiting, 5 queued, 1 no lane"
 
 # c) owner wait: every row done but F
-for r in a b c d e; do done_ "$M" "jg-plan-$r"; done
+alert() { run "$M" "$ROOT/bin/jg-alert.sh" "$@"; }
+key=fleet-blocked--swarm-lane-jg-plan-f
+printf 'blocked [at=%s] [key=fixture]: waiting for access\n' "$now" > "$L/state/jg-plan-f.status"
+printf 'blocked [at=%s] [key=fixture]: outside this swarm\n' "$now" > "$L/state/jg-plan-g.status"
+chk "$M" $((now + 600)) > /dev/null
+check "exactly ten minutes is quiet" "$(alert list)" ""
+chk "$M" $((now + 601)) > /dev/null
+check "the cross-home blocker raises one alert" "$(alert list)" "$key"
+check "the P1 names the lane and owner" \
+  "$(alert show "$key" 2> /dev/null | grep -Ec '^(precedence=P1|note=.*jg-plan-f.*lead)' || true)" 2
+printf 'working [at=%s]: still investigating\n' "$((now + 602))" >> "$L/state/jg-plan-f.status"
+chk "$M" $((now + 602)) > /dev/null
+check "routine progress leaves the blocker open" "$(alert word "$key" 2> /dev/null || true)" open
+check "only one blocked lane notification across scans" "$(grep -Fc "$key" "$M/state/.wake-queue" 2> /dev/null || true)" 1
+printf 'resolved [at=%s] [key=fixture]: access restored\n' "$((now + 603))" >> "$L/state/jg-plan-f.status"
+chk "$M" $((now + 604)) > /dev/null
+check "the alert clears when the blocker resolves" "$(alert word "$key" 2> /dev/null || true)" resolved
+printf 'blocked [key=fixture]: waiting again; old status format\n' >> "$L/state/jg-plan-f.status"
+chk "$M" $((now + 605)) > /dev/null
+check "an unstamped recurrence starts a new wait" "$(alert list)" ""
+chk "$M" $((now + 1206)) > /dev/null
+check "an unstamped blocker eventually raises a fresh alert" "$(alert list)" "$key"
+printf 'resolved [key=fixture]: access restored again\n' >> "$L/state/jg-plan-f.status"
+chk "$M" $((now + 1207)) > /dev/null
+check "the second alert clears independently" "$(alert word "$key" 2> /dev/null || true)" resolved
+
+# A dependency pause alerts Main even while another slice remains in flight.
+printf 'paused [at=%s] [wait=outside] [reason=dependency]: waiting for base\n' "$((now + 1300))" >> "$L/state/jg-plan-f.status"
+chk "$M" $((now + 1901)) > /dev/null
+check "an overdue dependency pause alerts Main during a partial stall" "$(alert word "$key" 2> /dev/null || true)" open
+check "dependency alert starts at Main" "$(alert show "$key" 2> /dev/null | sed -n 's/^rung=//p')" 3
+chk "$M" $((now + 1902)) > /dev/null
+check "the dependency pause alerts only once" "$(grep -Fc "$key" "$M/state/.wake-queue" 2> /dev/null || true)" 3
+printf 'working [at=%s]: dependency cleared\n' "$((now + 1903))" >> "$L/state/jg-plan-f.status"
+chk "$M" $((now + 1904)) > /dev/null
+check "the dependency alert clears when work resumes" "$(alert word "$key" 2> /dev/null || true)" resolved
+
+# The lead can claim a steer stored by Main, while the lane actions stay in the lead home.
+arm "$L" lead off absent null '["jg-plan-f","jg-plan-g","jg-plan-g-extra"]'
+# shellcheck disable=SC2016 # the fixture shell expands its own positional arguments
+run "$M" bash -c '. "$1/bin/jg-task-inbox-lib.sh"; jg_task_inbox_write "$2" lead "$3"' \
+  _ "$ROOT" "$M/state" 'Check jg-plan-f, then jg-plan-g.' > /dev/null
+inbox=$M/state/lead.inbox
+mv "$inbox/001.msg" "$inbox/handled/"
+handled() {
+  run "$L" env JG_TASK_INBOX="$inbox" "$ROOT/bin/jg-delivery.sh" handled lead 001 --evidence reply:fixture \
+    --action jg-plan-f "Access restored" --action jg-plan-g "Worker steered"
+}
+if handled >/dev/null && handled >/dev/null &&
+   run "$L" env JG_TASK_INBOX="$inbox" "$ROOT/bin/jg-delivery.sh" handled lead 001 --evidence reply:fixture >/dev/null; then
+  for row in jg-plan-f jg-plan-g; do
+    if [ "$row" = jg-plan-f ]; then action="Access restored"; else action="Worker steered"; fi
+    check "one action for $row in the lead home after retry" \
+      "$(jq -r --arg row "$row" 'select(.lane == $row) | [.action, .evidence] | @tsv' "$L/state/swarm-actions/$row/"*.json)" \
+      "$action"$'\treply:fixture'
+  done
+else
+  check "the lead can claim its parent steer" "refused" "handled"
+fi
+check "the parent has no action copies" "$([ -e "$M/state/swarm-actions" ] && echo yes || echo no)" no
+check "an unmentioned lane has no action" "$([ -e "$L/state/swarm-actions/jg-plan-g-extra" ] && echo yes || echo no)" no
+arm "$L" lead off absent null '["jg-plan-f"]'
+
+for r in a b c d e; do
+  done_ "$M" "jg-plan-$r"
+  printf 'jg-plan-%s\tproj\tfixture-commit\t%s\tfixture\n' "$r" "$now" >> "$M/data/trunk-landings.tsv"
+done
 out=$(chk "$M")
 check "owner wait line" "$out" "swarm jg-plan: all runnable slices landed; 1 wait for the owner: jg-plan-f"
 check "owner wait is said once" "$(chk "$M")" ""
 
 # d) the owner's answer: F no longer waits, and the check changes no row
 run "$M" "$ROOT/bin/jg-captain-hold.sh" design-pick card-1 --words "a" > /dev/null
-check "answered: no wait" "$(status)" "jg-plan: 5/6 landed, 0 working, 1 queued (0 wait for the owner), started 0h00m ago"
+check "answered: no wait" "$(status)" "jg-plan: 5/6 landed, 0 running, 0 waiting, 1 queued, started 0h00m ago
+  a (jg-plan-a): landed
+  b (jg-plan-b): landed
+  c (jg-plan-c): landed
+  d (jg-plan-d): landed
+  e (jg-plan-e): landed
+  f (jg-plan-f): queued; dependencies: -"
 chk "$M" > /dev/null
-check "the check closed no row" "$(status --short)" "jg-plan 5/6 landed, 0 working, 0 wait for the owner"
+check "the check closed no row" "$(status --short)" "jg-plan: 5/6 landed, 0 running, 0 waiting, 1 queued"
 
 # e) finish
 done_ "$L" jg-plan-f

@@ -850,20 +850,28 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
     # and run it. The stamp must be a value the worker supplies, so the command
     # may not carry an unevaluated substitution that a file-write tool would
     # copy through verbatim.
-    # shellcheck disable=SC2016 # Match literal backticks in the generated interface.
-    append=$(sed -n '/`echo "{state}/s/.*`\(echo .*\)`.*/\1/p' "$brief")
     now=$(date +%s)
-    append=${append//\{state\}/done}
-    append=${append//\{one short line\}/test event}
-    append=${append//<epoch>/$now}
-    case "$append" in
-      *"\$("*) fail "$kind scaffold left an unevaluated command in its status-append line" ;;
-    esac
     mkdir -p "$home/state"
-    bash -c "$append" || fail "generated status command failed"
+    if [ "$kind" = squad_lead ]; then
+      # shellcheck disable=SC2016 # Match literal backticks in the generated interface.
+      append=$(sed -n '/`echo "{state}/s/.*`\(echo .*\)`.*/\1/p' "$brief")
+      append=${append//\{state\}/done}
+      append=${append//\{one short line\}/test event}
+      append=${append//<epoch>/$now}
+      case "$append" in
+        *"\$("*) fail "$kind scaffold left an unevaluated command in its status-append line" ;;
+      esac
+      bash -c "$append" || fail "generated status command failed"
+    else
+      assert_grep 'jg status write <blocked|failed>' "$brief" "$kind scaffold omitted the worker status command"
+      printf 'kind=ship\nmode=local-only\nbranch=fixture\n' > "$home/state/$id.meta"
+      JG_HOME="$home" JG_TASK="$id" "$ROOT/bin/jg" status write blocked "test event" >/dev/null \
+        || fail "worker status command failed"
+    fi
     epoch=$(bash -c '. "$1"; status_line_at_epoch "$(cat "$2")"' _ \
       "$ROOT/bin/jg-classify-lib.sh" "$home/state/$id.status")
-    [ "$epoch" = "$now" ] || fail "$kind scaffold did not record the worker's event time"
+    [ "$epoch" -ge "$now" ] && [ "$epoch" -le "$(date +%s)" ] \
+      || fail "$kind scaffold did not record the worker's event time"
     # Every status signal the brief instructs a worker to append is a template
     # the worker fills in and writes verbatim, with or without a shell, not only
     # rule 4's echo: substitute each one's named placeholders and read the stamp
@@ -982,7 +990,7 @@ test_scout_brief_names_sign_off_only() {
     'scout brief did not ask for the sign-off report link only'
   assert_grep "first section is \`## 1. Answer (five lines)\`" "$brief" \
     'scout brief did not make the report open with its Answer'
-  assert_grep 'jg-report-opening-check.sh' "$brief" \
+  assert_grep 'jg report report-opening-check' "$brief" \
     'scout brief did not name the report page opening check'
   assert_grep 'psm-wide-check.sh' "$brief" \
     'scout brief did not name the wide-report state map check'
@@ -1817,7 +1825,7 @@ test_scout_depth_levels() {
     esac || fail "$id: scaffold failed"
     assert_grep "# Recon depth" "$home/data/$id/brief.md" "$id: brief has no depth section"
     assert_grep "deep-recon/SKILL.md" "$home/data/$id/brief.md" "$id: brief does not name the deep-recon skill"
-    assert_grep "jg-recon-gate.sh $id" "$home/data/$id/brief.md" "$id: brief does not name the gate"
+    assert_grep "jg proof recon-gate $id" "$home/data/$id/brief.md" "$id: brief does not name the gate"
     assert_grep "# Definition of done" "$home/data/$id/brief.md" "$id: depth section displaced the definition of done"
   done
   assert_grep "Recon depth: standard" "$home/data/depth-default/brief.md" "absent --depth did not default to standard"

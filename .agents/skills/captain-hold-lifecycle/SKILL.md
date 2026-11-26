@@ -9,7 +9,7 @@ metadata:
 # Captain-hold lifecycle
 
 A decision is not a separate thing: it is simply a task waiting on the captain.
-The one primitive is an ordinary backlog task held for the captain through `bin/jg-captain-hold.sh hold`; its identity is the task id, and that wrapper owns the deterministic mechanics this policy relies on.
+The one primitive is an ordinary backlog task held for the captain through `jg hold captain-hold hold`; its identity is the task id, and that wrapper owns the deterministic mechanics this policy relies on.
 The agent performs the semantic inventory because scripts must not infer captain calls from report prose, visual-review artifacts, terminal output, or chat.
 
 ## Policy
@@ -19,26 +19,27 @@ For a sign-off board-backed handoff, publish the reply through `sign-off-axi` be
 Prefer holding the work item the question gates over minting a new row; create a new task only when no work item exists to hold.
 The originating investigation or review is never its own inventory entry, so hold a separate task for the call and pass `--origin <origin-id>` so `complete` can check it.
 Put the question and its options in the hold reason, and keep one held task per genuine gate: a multi-question review is one held task pointing at its report, not a row per question. Represent that task with exactly one board card that consolidates its questions and options; never fan one task id into duplicate same-key cards.
-Register or re-hold through `bin/jg-captain-hold.sh hold`, which is idempotent per task id; the question becomes one gate row on the ticket that `bin/jg-backlog.sh questions` lists and that no list of work shows.
-After inventorying the whole report and review surface, run `bin/jg-captain-hold.sh complete` with every captain-held task id, or with `--none` only when the reviewed surface leaves nothing waiting on the captain.
+A muster round is the exception: one round ticket with one card per question, because each question is its own decision (`.agents/skills/muster/SKILL.md`).
+Register or re-hold through `jg hold captain-hold hold`, which is idempotent per task id; the question becomes one gate row on the ticket that `jg ticket backlog questions` lists and that no list of work shows.
+After inventorying the whole report and review surface, run `jg hold captain-hold complete` with every captain-held task id, or with `--none` only when the reviewed surface leaves nothing waiting on the captain.
 A completed investigation and an ended visual review use this same owner and completion command; a visual report tool, including sign-off, never owns a parallel completion policy.
 Run the command in the originating work's authoritative `JG_HOME`; Squad Lead-owned work registers in that Squad Lead home's backlog, and a question already held anywhere is never re-registered as a second row.
 Do not close a captain-held task merely because the originating investigation completed, its report was archived, its visual review ended, or its task was torn down.
 Holding the work item the question gates is safe for exactly that reason: cleanup keeps such a row open with the finished work's deliverable recorded and returns it to the queue, so it still reads as the captain's own call.
 Only `answer` with the captain's words or an evidence-backed `reconcile close` may resolve it.
 
-Never close anything the captain owns without recording what he actually said: `bin/jg-captain-hold.sh answer` writes his exact words into the task and closes a question-shaped call, while `--release` frees a captain-gated work item to proceed.
+Never close anything the captain owns without recording what he actually said: `jg hold captain-hold answer` writes his exact words into the task and closes a question-shaped call, while `--release` frees a captain-gated work item to proceed.
 A merge approval uses that existing release path because approval permits the merge to proceed; cleanup closes the work only after it lands and records what shipped.
 Closing a held row at merge approval instead records completion before landing, so the backlog claims completion before the work actually ships.
 When the answer changes what a task must build, follow `task-dispatch`'s mid-task ask rule to preserve the captain's words in the brief and steer the worker.
-When the captain says "later", that is an answer too: re-hold with `bin/jg-captain-hold.sh hold <id> --reason "<reason>" --until <date>` so the item leaves the live Captain's Call and resurfaces on its date, instead of leaving a live-looking card or fabricating a closure.
-"A keyed answer resolves its matching captain-held task" is one capability with one owner, `bin/jg-captain-hold.sh answers`, and every channel that carries a captain answer feeds it the gate id (or a ticket id with one open gate) and the answer, an answer with no words is refused, and the gate closes the way its own `close` says; a channel never maps keys to tasks, records a decision, or resolves anything itself.
-Chat already feeds it through `bin/jg-send.sh --resolve-key`, and a captured-answer source feeds it once bound with `bin/jg-captain-hold.sh bind <source-id>`; bind before arming the source, and key each structured question by the held task's id.
+When the captain says "later", that is an answer too: re-hold with `jg hold captain-hold hold <id> --reason "<reason>" --until <date>` so the item leaves the live Captain's Call and resurfaces on its date, instead of leaving a live-looking card or fabricating a closure.
+"A keyed answer resolves its matching captain-held task" is one capability with one owner, `jg hold captain-hold answers`, and every channel that carries a captain answer feeds it the gate id (or a ticket id with one open gate) and the answer, an answer with no words is refused, and the gate closes the way its own `close` says; a channel never maps keys to tasks, records a decision, or resolves anything itself.
+Chat already feeds it through `jg radio send <ticket> --resolve-key <decision-key> <text>`, and a captured-answer source feeds it once bound with `jg hold captain-hold bind <source-id>`; bind before arming the source, and key each structured question by the held task's id.
 An unbound source and a key that names no captain-held task both simply feed nothing: the answer is still captured and Juggernaut is still woken, and closing falls back to the direct command above.
 One answer value is reserved and closes nothing: `reconcile` means "go re-check reality", never "the captain answered", so the shared intake refuses it from every channel and creates nothing.
 A bound captured source uses a separate seam: its adapter omits reconcile from keyed answers and emits the selected task id through `reconciles`, the generic runner feeds that into `reconcile-requests`, and the intake verifies the source binding and the local captain-held task before filing the durable board request.
 A remote Squad Lead card whose task is absent from the main backlog therefore remains announced but cannot create a main-home request; owner-aware request and mutation routing to the authoritative Squad Lead home is a separate follow-up.
-That board-created request is yours to work off in the turn that receives it: `bin/jg-captain-hold.sh reconcile close <id> --evidence-file <path>` records the EVIDENCE and closes a moot call, while `reconcile note <id> --note-file <path>` annotates a genuinely active call and leaves it held.
+That board-created request is yours to work off in the turn that receives it: `jg hold captain-hold reconcile close <id> --evidence-file <path>` records the EVIDENCE and closes a moot call, while `reconcile note <id> --note-file <path>` annotates a genuinely active call and leaves it held.
 Both outcomes refuse unless that task still has the pending request created by the captain's board selection, so neither is a standalone way to mutate a captain call.
 A normal captain answer also retires any pending request because the call is settled, including close, release, and idempotent replay paths.
 A retirement failure makes the command fail without reversing the already-durable answer, close, or note, and `reconcile list` keeps the surviving request visible for retry.
@@ -61,5 +62,5 @@ Record what the captain said with `answer`, which closes the gate with his words
 6. Close each call only through `answer` (or a channel that feeds `answers`), close a board-requested moot call through evidence-backed `reconcile close`, record a still-active reconciliation through `reconcile note`, use `--until` when the captain defers it, or confirm a channel already closed it.
 7. Confirm Bearings reflects the outcome: answered or reconciled-moot calls leave Captain's Call, released work resumes, active reconciliations remain held, and deferred calls sit in Charted Next with their date.
 
-`bin/jg-captain-hold.sh --help` owns command syntax, close modes, legacy-identity compatibility, completion attestation, retry behavior, and close ordering.
+`jg help` owns command syntax; script: `bin/jg-captain-hold.sh --help` owns close modes, legacy-identity compatibility, completion attestation, retry behavior, and close ordering.
 `docs/captain-hold-lifecycle.md` records the mechanism and regression evidence without restating this policy.

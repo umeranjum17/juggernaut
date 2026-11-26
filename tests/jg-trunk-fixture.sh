@@ -101,6 +101,59 @@ SH
 trunk() { PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="${CODE_ROOT:-$W/root}" JG_STATE_OVERRIDE="$HOME_D/state" \
   JG_DATA_OVERRIDE="$HOME_D/data" JG_CONFIG_OVERRIDE="$HOME_D/config" "$W/root/bin/jg-trunk.sh" "$@"; }
 
+# Real worker-start, brief and dispatcher; the backlog and spawn stay in the fixture.
+repair_fixture() {
+  mkdir -p "$W/tickets"
+  cat > "$W/root/bin/jg-backlog.sh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+tickets=$JG_HOME/../tickets
+case "$1" in
+  show|task) cat "$tickets/$2" ;;
+  add)
+    ticket="$tickets/$2"
+    if [ -f "$ticket" ]; then exit 1; fi
+    printf '  title: %s\n' "$3" > "$ticket"
+    printf '%s\n' "$*" >> "$JG_HOME/../backlog-calls"
+    while [ "$#" -gt 1 ] && [ "$1" != --body-file ]; do shift; done
+    if [ "$1" = --body-file ]; then cat "$2" >> "$ticket"; fi ;;
+  approve-dispatch)
+    [ ! -f "$JG_HOME/../approval-outage" ] || { echo 'fixture approval temporarily unavailable' >&2; exit 1; }
+    [ -s "$tickets/$2" ]
+    mkdir -p "$JG_HOME/state/dispatch-approved"
+    printf 'approved-at=1\nharness=%s\nmodel=%s\neffort=%s\n' "$4" "$6" "$8" > "$JG_HOME/state/dispatch-approved/$2" ;;
+  ready)
+    [ "$2" = --spawnable ]
+    for f in "$tickets"/*; do [ ! -f "$f" ] || printf '%s\tproj\n' "${f##*/}"; done ;;
+esac
+SH
+  cat > "$W/spawn" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$JG_HOME/../spawn-calls"
+printf 'kind=ship\n' > "$JG_HOME/state/$1.meta"
+SH
+  printf '#!/usr/bin/env bash\necho "blocking-batch: ok"\n' > "$W/hold"
+  printf '{"default":{"harness":"codex","model":"fixture","effort":"medium"}}\n' > "$HOME_D/config/crew-dispatch.json"
+  printf 'on\n' > "$HOME_D/config/auto-dispatch"
+  printf '3\n' > "$HOME_D/config/lane-target"
+  printf '#!/usr/bin/env bash\nexec env JG_AUTO_DISPATCH_SPAWN=%q JG_AUTO_DISPATCH_HOLD=%q JG_AUTO_DISPATCH_SCALE=%q JG_AUTO_DISPATCH_RESERVE=/bin/true bash %q check %q\n' \
+    "$W/spawn" "$W/hold" "$W/no-scaler" "$ROOT/core/auto-dispatch/dispatch.sh" "$HOME_D" > "$HOME_D/state/auto-dispatch.check.sh"
+  chmod +x "$W/spawn" "$W/hold" "$HOME_D/state/auto-dispatch.check.sh"
+  ln -sfn "$W/root/bin" "$HOME_D/bin"
+  ln -sfn "$ROOT/core" "$HOME_D/core"; ln -sfn "$ROOT/policy" "$HOME_D/policy"
+  ln -sfn "$ROOT/defaults" "$W/root/defaults"; ln -sfn "$ROOT/docs" "$W/root/docs"
+  ln -sfn "$ROOT/defaults" "$HOME_D/defaults"; ln -sfn "$ROOT/docs" "$HOME_D/docs"
+}
+
+await_repair_lane() {  # <ticket id>
+  local record="$HOME_D/data/auto-dispatch/$1.start.1" n
+  for n in $(seq 1 100); do
+    grep -q '^result=started$' "$record" 2>/dev/null && return 0
+    sleep 0.1
+  done
+  fail "repair $1 did not start: $(cat "$record" "$HOME_D/data/auto-dispatch/rows.tsv" 2>/dev/null)"
+}
+
 commit_in() {  # <worktree> <file> <content> <message> [<note>]
   mkdir -p "$(dirname "$1/$2")"; printf '%s\n' "$3" > "$1/$2"; git -C "$1" add "$2"
   git -C "$1" -c user.name=t -c user.email=t@example.invalid commit -q -m "$4" ${5:+-m "$5"}

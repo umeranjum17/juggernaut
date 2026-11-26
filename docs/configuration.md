@@ -984,7 +984,8 @@ It classifies measurable memory as `OK`, `WAIT` (new agents should wait), or `AL
 These controls reduce risk but cannot guarantee avoidance of an out-of-memory kill:
 
 - Each watcher loads the `core/host-memory/bin/jg-host-memory-lib.sh` lifecycle functions and registers its home with the one sampler the machine shares (a record under `$XDG_RUNTIME_DIR/jg-host-memory-<uid>`, or `JG_HOST_MEMORY_MACHINE_DIR`).
-  The sampler records every 10 seconds by default (`JG_HOST_MEMORY_SECS`) into each registered home's `state/host-memory.tsv`, even during slow recovery or custom checks.
+  The sampler takes one machine measurement every 10 seconds by default (`JG_HOST_MEMORY_SECS`) and records a verdict under each registered home's thresholds in its `state/host-memory.tsv`, even during slow recovery or custom checks.
+  Standalone guard diagnostics read that shared measurement.
   Lookout does not currently show host-memory readings.
   The home-scoped `state/.host-memory-sampler.pid` records the shared sampler's PID and process identity; the watcher restarts a dead sampler, and the last home to stop ends it, signalling only the exact recorded PID after verifying its identity and script. A home whose watcher is gone drops out of the loop by itself.
 - At the wait or alert level, local `bin/jg-spawn.sh` launches and `bin/jg-control.sh relaunch` refuse to start a new agent and record the reason in `state/admission-refused`, which remains in local state and is not shown by Lookout.
@@ -1842,6 +1843,7 @@ Squad Lead homes inherit the file with the other shared config.
 |---|---|---|
 | `squad-lead` | `bin/jg-harness.sh` (`squad_lead_line`), used by `bin/jg-spawn.sh` and `bin/jg-control.sh` | Harness, model, and effort of a Squad Lead launch. A per-lead pin in `config/squad_leads/<id>/harness` still wins, and the entry wins over `config/squad-lead-harness`. |
 | `worker-default` | `bin/jg-spawn.sh` | Model a worker launch records when no model was chosen and the entry names the launching harness. `bin/jg-spawn.sh` otherwise refuses a spawn or relaunch whose model is empty or `default`. |
+| `done-done-author` | done-done-axi 0.6.34 | Writer for `qa --write` and `journey add`, `enhance`, and `improve`. Done-done reads the ordered profiles directly and gives them precedence over its global `routes.author` and `agent` settings. |
 | `done-done-judge` | `core/merge-card/merge-card` | Model that judges the Evidence card. The harness must be `pi`, and the model carries its provider prefix. |
 | `supervision-engine` | `bin/jg-supervision-engine-lib.sh` | Default model of the supervision engine when its harness matches the entry. |
 | `no-mistakes-review` | `core/pipeline-quota-failover/pi-quota-failover`, `core/pipeline-quota-failover/switch.sh` | Model of the no-mistakes review chain, and of the account-pool route that names no model; `switch.sh` plans the same model when no pin or pool pick names one. The harness must be `pi`, and the model carries its provider prefix. The installed wrapper finds the home through `PI_QUOTA_FAILOVER_JG_HOME`, then `JG_HOME`, then `~/juggernaut`; `PI_QUOTA_FAILOVER_CHAIN` still wins. |
@@ -1851,11 +1853,21 @@ Squad Lead homes inherit the file with the other shared config.
 | `voice-relay` | `bin/jg-voice-relay.py` | Nova Sonic model of the voice relay, with the same rules as `inbox-stt`. `JG_VOICE_MODEL` still wins over the entry, and the entry wins over `config/voice-model`. |
 | `project-state-map` | `core/project-state-map/bin/psm-read.sh` | The Claude model of the default project state map read command. The harness must be `claude`. `PSM_READ_COMMAND` still wins. |
 | `route-chain` | `core/account-pool/bin/jg-route-chain-lib.sh`, read by `jg-model-pool`, `jg-route-probe` and the done-done judge | The default free-route chain, in order. `use` is the list of routes; each is `{harness, model}` with an optional `provider` (default: the model's prefix), `billing` (default `plan`) and `only` (`hard`). It replaces only the built-in default chain; a home's own `route=` lines in `config/account-pool` still win. Every route that passes the allow-list stays in the chain. |
+| `recon-critic` | `bin/jg-recon-critic.sh` (`profile`, `start`), run by `core/recon-loop` | Harness, model and optional effort of the separate critic of a deep Recon. The default is `agy` with `gemini-4-neon-high`, a different model family from the researcher's, and it lives in `bin/jg-recon-critic.sh` once. `bin/jg-recon-critic.sh profile <recon> <harness> <model> [<effort>]` writes `data/<recon>/critic-profile` for one Recon, and that file wins over the entry. A profile the spawn refuses (agy not installed, a model the allow-list excludes) stops the loop and wakes Overwatch; it never falls back to another harness. |
 | `model-pool` | `core/account-pool/bin/jg-model-pool` | The Claude model a pick returns when the request names none. The harness must be `claude`. A model the request names still wins. |
 
 Every job in this repository that starts a model reads this file; the table above is the full list.
-The jobs that live in other packages (the done-done author, first-draft and learn-from-mistakes) keep their own defaults until each package reads the file.
+First-draft and learn-from-mistakes keep their own defaults.
 See [`docs/examples/tool-models.json`](examples/tool-models.json) for a starting point.
+
+For the Codex fleet, copy the `done-done-author` object from that example into the top-level `rules` array of `config/tool-models.json`, keeping the other tool entries.
+The example uses GPT 6.1 Terra at medium effort first and GPT 6.2 Sol at high effort as an availability fallback.
+For a hard task, put the same author rule with the two `use` entries reversed in a separate tool-models file and set `JG_TOOL_MODELS` to its path for that done-done invocation.
+The whole file is selected by that override, so include any other rules the invocation needs.
+Done-done uses the profile order supplied for the invocation, so a hard task needs the explicit Sol-first selection.
+As a machine-wide alternative, put the example's ordered `use` array under `routes.author` in `~/.done-done/config.yaml` (or `$DONE_DONE_HOME/config.yaml`), where a fleet `done-done-author` rule still takes precedence.
+`done-done doctor --json` shows the selected writer and does not launch it.
+`qa --write` starts a writer only when its diff-based plan calls for a new or extended journey.
 
 ## Preferred stack and architecture (config/preferred-stack.json, config/architecture.json)
 
@@ -3103,6 +3115,7 @@ JG_CLAUDE_AUTOARM_EPOCH_FRESH=15   # seconds a recorded auto-arm outcome remains
 JG_CLAUDE_TURNEND_BLOCK_BUDGET=3   # consecutive --claude guard re-blocks before the verified one-time attended fail-open; safely below Claude Code's 8-block override
 JG_ARM_CONFIRM_TIMEOUT=10   # optional seconds override; unset uses jg_watcher_confirmation_budget in bin/jg-wake-lib.sh
 JG_ARM_ATTACH_POLL=2  # seconds between checks while jg-watch-arm follows an attached watcher cycle (bin/jg-watch-arm.sh header)
+JG_ARM_HANDOFF_WINDOW=15  # most seconds an attached arm waits for a successor to claim the lock before reporting the delivered wake; capped by the confirmation budget (bin/jg-watch-arm.sh header)
 JG_OPENCODE_ARM_READY_TIMEOUT_MS=12000   # optional milliseconds override; unset uses the shared watcher startup budget
 JG_PI_ARM_READY_TIMEOUT_MS=12000   # optional milliseconds override; unset uses the shared watcher startup budget
 JG_WATCH_ARM_RETIRE_TIMEOUT_MS=1000   # milliseconds Pi/OpenCode wait for an unready successor arm to exit before abandoning retries

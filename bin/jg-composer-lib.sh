@@ -2195,6 +2195,25 @@ EOF
   printf '%s\n' "$joined" | LC_ALL=C awk '{$1=$1; printf "%s", $0}'
 }
 
+# jg_composer_agy_idle_empty: prove the last frame of a known live agy pane.
+# The ASCII prompt alone is ambiguous with a shell. Require both rules and
+# the pinned shortcuts footer immediately around a prompt with no draft.
+jg_composer_agy_idle_empty() {  # <visible screen>
+  printf '%s\n' "$1" | jg_composer_strip_ansi | LC_ALL=C awk '
+    {
+      sub(/^[ \t]*/, "")
+      sub(/[ \t\r]*$/, "")
+      a = b; b = c; c = d; d = $0
+      if (NF) { top = a; prompt = b; bottom = c; footer = d }
+    }
+    END {
+      if (prompt != ">" || top != bottom || top !~ /^────────/ ||
+          footer !~ /^\? for shortcuts[ \t][ \t]+[^ \t]/) exit 1
+      gsub(/─/, "", top)
+      exit (top != "")
+    }'
+}
+
 # jg_composer_blocking_dialog: name a screen whose next Enter would answer it.
 # Prints the name and returns 0 only for the recorded structure of one dialog:
 # the heading on its own line, then its selected row alone on a row, with the

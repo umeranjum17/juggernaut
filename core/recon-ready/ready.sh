@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # recon-ready watcher check: a Recon that passes its gate raises one alert that names its report and the next items.
-# Usage: ready.sh check <jg-home>
+# Usage: ready.sh check|relay <jg-home>
 #
 # For each state/<task>.meta of kind scout whose data/<task>/report.md exists and whose last status line is a
 # `done` or a `needs-decision` (the two lines a finished Recon writes), the check runs bin/jg-recon-gate.sh <task>.
@@ -10,6 +10,9 @@
 # next items) and the count of open decisions (section 10). A Recon whose gate refuses prints nothing: the
 # refusal is the worker's to fix, and the gate runs again on the next sweep.
 # The record is also what core/wait-timers reads: a Recon with this record arms no owner timer.
+# The delivery tick runs relay after the critic loop. A done Recon with a passing gate gets a report card
+# on the configured board. A stable key lets the next tick pick up after a post that reached the board
+# before its relayed move was recorded. The watcher's check still owns readiness and on-report follow-up.
 # Follow-up stated ahead: a Recon's ticket body may say `on-report: triage-build <harness> <model> <effort>`.
 # For a Recon whose report passed its gate, `jg-backlog.sh on-report <ticket>` prints the route only when the
 # ticket rests on a record of the captain's yes; then, with no open decision blocking the ticket
@@ -22,8 +25,10 @@
 # JG_RECON_READY_BACKLOG and JG_RECON_READY_HOLD (the backlog and captain-hold commands).
 set -u
 export LC_ALL=C
-[ "$#" -eq 2 ] && [ "$1" = check ] && [ -d "$2/state" ] || { echo "usage: ready.sh check <jg-home>" >&2; exit 2; }
+[ "$#" -eq 2 ] && { [ "$1" = check ] || [ "$1" = relay ]; } && [ -d "$2/state" ] || { echo "usage: ready.sh check|relay <jg-home>" >&2; exit 2; }
+mode=$1
 FMH=$(cd "$2" && pwd -P)
+BIN=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../bin" 2>/dev/null && pwd -P) || BIN=$FMH/bin
 STATE=${JG_STATE_OVERRIDE:-$FMH/state}
 DATA=${JG_DATA_OVERRIDE:-$FMH/data}
 GATE=${JG_RECON_READY_GATE:-$FMH/bin/jg-recon-gate.sh}
@@ -32,6 +37,15 @@ FOLLOW=$STATE/on-report
 BACKLOG=${JG_RECON_READY_BACKLOG:-$FMH/bin/jg-backlog.sh}
 HOLD=${JG_RECON_READY_HOLD:-$FMH/bin/jg-captain-hold.sh}
 umask 077
+
+if [ "$mode" = relay ]; then
+  export JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE JG_DATA_OVERRIDE=$DATA
+  # shellcheck source=bin/jg-board-link-lib.sh
+  . "$BIN/jg-board-link-lib.sh"
+  board=$(jg_board_file "$FMH") || exit 0
+  # shellcheck source=bin/jg-facts-lib.sh
+  . "$BIN/jg-facts-lib.sh"
+fi
 
 meta_get() { # <meta-file> <key> -> last value
   local line value=''
@@ -64,6 +78,49 @@ open_decisions() { # <report>: rows of the open decisions table, else numbered o
 
 first_item() { next_items "$1" | cut -d';' -f1 | sed 's/^ *//'; }
 
+# Post the report before recording the relay. Authored reports already on the
+# board keep their card. Never turn findings into approval requests.
+relay_report() (  # <task> <report> <hash> <answer>
+  local task=$1 report=$2 answer=$4 ticket project facts card existing filed key post_out
+  facts=$(jg_fact_next_step "$STATE" "$DATA" "$task")
+  [ "$(jg_fact_val "$facts" step)" = relay ] && [ "$(jg_fact_val "$facts" work)" = "$task" ] || return 0
+  ticket=$(jg_fact_val "$facts" ticket)
+  key=recon-$(printf '%s\n' "$task" "$3" | sha256sum | cut -d' ' -f1)
+  "$BIN/jg-loss-claim-check.sh" "$report" >/dev/null || return 1
+  existing=$(jq -r --arg task "$task" --arg key "$key" '
+    first(((.items // []) + (.decisions // []))[] | select((.kind // .type) == "report" and .filer == $task and
+      .dismissed != true and
+      (.key == $key or (.key | test("^recon-[0-9a-f]{64}$") | not))) | .key) // empty
+  ' "$board") || return 1
+  if [ -n "$existing" ]; then
+    "$BIN/jg-report-opening-check.sh" "$report" --board "$board" --filer "$task" --key "$existing" >/dev/null || return 1
+  else
+    project=$(meta_get "$STATE/$task.meta" project)
+    project=${project##*/}
+    filed=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    card=$(mktemp "$DATA/$task/.recon-card.XXXXXX") || return 1
+    trap 'rm -f -- "$card"' EXIT
+    jq -n --rawfile report "$report" --arg key "$key" --arg task "$task" --arg project "${project:-Research}" \
+      --arg answer "$answer" --arg filed "$filed" --arg ticket "$ticket" \
+      --arg items "$(next_items "$report")" --arg decisions "$(open_decisions "$report")" '
+      {contract: 1, kind: "report", schema: 4, layout: "document", purpose: "other",
+       key: $key, filer: $task, ticket: $ticket, project: $project[:40], filed: $filed,
+       title: $answer[:100], about: $answer,
+       sections: [{id: "answer", stage: "found", heading: $answer[:80], body: "",
+                   blocks: [{type: "table", columns: ["Next items", "Open decisions"],
+                             rows: [[(if $items == "" then "None listed" else $items[:120] end), $decisions]]}]},
+                  {id: "report", stage: "found", heading: "Full report", body: "",
+                   blocks: [{type: "text", text: $report}]}]}
+    ' > "$card" || return 1
+    [ "$(jq -j '.sections[1].blocks[0].text' "$card" | sha256sum | cut -d' ' -f1)" = "$3" ] || return 1
+    "$BIN/jg-report-opening-check.sh" "$report" --card "$card" >/dev/null || return 1
+    post_out=$(timeout 20 "${JG_RECON_READY_POST:-sign-off-axi}" post "$board" --kind report --from "$card" 2>&1) \
+      || { printf '%s\n' "$post_out" >&2; return 1; }
+  fi
+  [ "$(sha256sum "$report" | cut -d' ' -f1)" = "$3" ] || return 1
+  "$BIN/jg-move.sh" "$ticket" relayed
+)
+
 # follow_up <task> <report>: the follow-up stated ahead, once, for a report this check has announced.
 follow_up() {
   local task=$1 report=$2 ticket route name slice out harness model effort
@@ -95,10 +152,16 @@ for meta in "$STATE"/*.meta; do
   last=$(tail -n 1 "$STATE/$task.status" 2>/dev/null) || continue
   case "$last" in done*|needs-decision*) ;; *) continue ;; esac
   sha=$(sha256sum "$report" | cut -d' ' -f1)
-  if [ "$(cat "$OUT/$task" 2>/dev/null)" = "$sha" ]; then follow_up "$task" "$report"; continue; fi
+  if [ "$mode" = check ] && [ "$(cat "$OUT/$task" 2>/dev/null)" = "$sha" ]; then follow_up "$task" "$report"; continue; fi
   gate=$(JG_HOME=$FMH timeout 20 "$GATE" "$task" 2>&1) || continue
   case "$gate" in *PASS*|*exempt*) ;; *) continue ;; esac
   answer=$(section "$report" 1 | sed '/^[[:space:]]*$/d' | head -n 1 | cut -c1-200)
+  if [ "$mode" = relay ]; then
+    case $last in
+      done*) relay_report "$task" "$report" "$sha" "$answer" || printf 'recon-ready: relay for %s is still owed\n' "$task" >&2 ;;
+    esac
+    continue
+  fi
   items=$(next_items "$report")
   mkdir -p "$OUT" 2>/dev/null || exit 0
   printf '%s\n' "$sha" > "$OUT/$task.tmp.$$" && mv "$OUT/$task.tmp.$$" "$OUT/$task"

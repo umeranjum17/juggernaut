@@ -1,7 +1,7 @@
 # Shipped workflows. A home changes or adds any of them in config/workflows (same lines); a name there wins.
 # <name>: <spec>     a spec is stages split by ">", steps that run at once split by "+", a count as "*N".
 # <name>: off        removes a shipped name in this home.
-# A step is a kind (worker, recon(quick|standard|deep), critic, owner(plan-approval), fanout, war-room(fast|full))
+# A step is a kind (worker, recon(quick|standard|deep), critic, owner(plan-approval), fanout, war-room(fast|full), muster(survey|light|full|complete))
 # or any name in these files. A kind is also a one-step workflow of the same name.
 scout: recon(quick)
 deep: recon(deep) > critic
@@ -11,7 +11,13 @@ deep-slices: deep > blitz
 war-room-blitz: war-room(fast) > blitz
 war-room-full-blitz: war-room(full) > blitz
 war-room-lite-blitz: deep > blitz
+discovery-first: war-room(fast) > muster(full) > war-room(full) > blitz
+muster-first: muster(full) > war-room(full) > blitz
+muster-only: muster(light) > blitz
 # pick <test> <value>: <name>, first match wins; a home file with any pick line replaces all of these
+pick title-tag [discovery-first]: discovery-first
+pick title-tag [muster-first]: muster-first
+pick title-tag [muster-only]: muster-only
 pick title-tag [design-ux]: scout-worker
 pick title-has war room: war-room-blitz
 pick kind recon: deep-slices

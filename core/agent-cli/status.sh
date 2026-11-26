@@ -3,6 +3,23 @@
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 jg_cli_context
+if [ "${1:-}" = write ]; then
+  shift
+  state=${1:-}; shift || true
+  case "$state" in blocked|failed) ;; *) jg_cli_die "usage: jg status write <blocked|failed> [--key <key>] <text>" ;; esac
+  key=''
+  if [ "${1:-}" = --key ]; then
+    key=${2:-}; [ -n "$key" ] || jg_cli_die "--key needs a key"
+    case "$key" in *[!a-zA-Z0-9._-]*) jg_cli_die "invalid key: $key" ;; esac
+    shift 2
+  fi
+  [ "$#" -gt 0 ] && [ -n "$*" ] || jg_cli_die "status text is required"
+  case "$*" in *$'\n'*) jg_cli_die "status text must be one line" ;; esac
+  if [ -n "$key" ]; then jg_cli_status_append "$state" "$*" "key=$key" || exit 1
+  else jg_cli_status_append "$state" "$*" || exit 1; fi
+  echo "$state recorded for $JG_CLI_TASK. Next: stop"
+  exit 0
+fi
 statusf=$JG_CLI_STATE/$JG_CLI_TASK.status
 last=''; [ -s "$statusf" ] && last=$(tail -n1 "$statusf")
 stage=$(JG_CREW_STATE_NO_FORGE=1 timeout 30 "$JG_CLI_TOOLS/bin/jg-crew-state.sh" "$JG_CLI_TASK" 2>&1 | head -n1)

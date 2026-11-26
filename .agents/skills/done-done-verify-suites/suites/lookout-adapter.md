@@ -1,3 +1,7 @@
 # Lookout adapter
 
-[Lookout adapter](../../../../core/lookout-adapter/README.md): run `bash lookout-adapter/tests/test.sh` (and `tests/wiring.test.sh` for the install probe: a late answer passes within `PROBE_WAIT`, a silent port or dead unit stops the install naming why); fixture `jg-flow` output must map into a document accepted by the pinned `lookout-axi@0.1.0` CLI, with no `.meta` secret, and be served at `/fleet.json`. Live: `JG_HOME=<home> LOOKOUT_DIR=<lookout clone> done-done run lookout-adapter-live` (`lookout-adapter/run-proof.sh`) serves the adapter on the real home read-only, points the clone at it and captures Overview, Lanes, Flow and Capacity; the header must not say Sample fleet.
+Run `done-done run core-lookout-adapter-test` for the [Lookout adapter](../../../../core/lookout-adapter/README.md).
+The fixture document served at `/fleet.json` passes the pinned `lookout-axi@0.1.0` contract check and omits private lane metadata.
+The HTTP journey counts full builds through the quota view and proves an idle tick skips the build, a ledger change updates the response and a repair finds an unlogged change.
+Run `bash core/lookout-adapter/tests/wiring.test.sh` for the install probe, which accepts a late answer within `PROBE_WAIT` and names a silent port or dead unit.
+The optional live journey `JG_HOME=<home> LOOKOUT_DIR=<lookout clone> done-done run lookout-adapter-live` serves the adapter read-only and captures Overview, Lanes, Flow and Capacity from fleet data.

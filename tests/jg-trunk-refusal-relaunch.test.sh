@@ -106,8 +106,64 @@ test_a_conflict_only_in_the_shared_registry_goes_to_the_lead_and_not_to_the_lane
   ready s; sweeps; sweeps
   [ "$(relaunches s)" = 0 ] || fail "a shared-file conflict starts no agent: $(relaunches s)"
   [ "$(steers s)" = 0 ] || fail "a shared-file conflict steers no worker: $(cat "$W/send-calls")"
-  [ "$(grep -c '^wait s lead blocker' "$W/backlog-calls")" = 1 ] || fail "the ticket waits on the lead once: $(cat "$W/backlog-calls")"
-  pass 'a conflict only in the shared registry puts the ticket on the lead once, with no agent and no steer'
+  ! grep -q '^wait s lead' "$W/backlog-calls" || fail "the lane has no wait of its own, the fault ticket holds the lead wait: $(cat "$W/backlog-calls")"
+  [ "$(grep -c '^add fault-.*-shared-done-done-yaml ' "$W/backlog-calls")" = 1 ] || fail "one fault ticket is filed: $(cat "$W/backlog-calls")"
+  [ "$(grep -c '^wait fault-.*-shared-done-done-yaml lead blocker' "$W/backlog-calls")" = 1 ] || fail "the fault ticket waits on the lead once: $(cat "$W/backlog-calls")"
+  [ "$(grep -c 'waits-for: fault-.*-shared-done-done-yaml' "$HOME_D/state/s.status")" = 1 ] || fail "the lane waits for the fault ticket once: $(cat "$HOME_D/state/s.status")"
+  pass 'a conflict only in the shared registry files one fault ticket on the lead and the lane waits for it, with no agent and no steer'
+}
+
+test_two_lanes_with_the_same_shared_fault_share_one_ticket() {
+  home_world twice
+  lane s two .done-done.yaml; stopped s; printf 'working [at=1]: still at it\n' >> "$HOME_D/state/s.status"
+  lane t two .done-done.yaml; stopped t; printf 'working [at=1]: still at it\n' >> "$HOME_D/state/t.status"
+  lane a one .done-done.yaml; sweeps
+  ready s; ready t; sweeps; sweeps
+  [ "$(grep -c '^add fault-' "$W/backlog-calls")" = 1 ] || fail "two lanes, one fault, one ticket: $(cat "$W/backlog-calls")"
+  [ "$(grep -c '^wait fault-' "$W/backlog-calls")" = 1 ] || fail "one lead wait for the fault: $(cat "$W/backlog-calls")"
+  { grep -q 'waits-for: fault-' "$HOME_D/state/s.status" && grep -q 'waits-for: fault-' "$HOME_D/state/t.status"; } || fail "both lanes wait for the one fault ticket"
+  pass 'two lanes meeting the same shared fault file one ticket and both wait for it'
+}
+
+test_the_environment_hook_fault_goes_to_one_ticket_not_the_lane() {
+  home_world hookfault
+  mkdir -p "$W/repository-hooks"
+  printf '#!/bin/sh\nexit 0\n' > "$W/repository-hooks/reference-transaction"; chmod 755 "$W/repository-hooks/reference-transaction"
+  git -C "$PROJ" config core.hooksPath "$W/repository-hooks"
+  lane e one; stopped e; lane f one work2.txt; stopped f
+  sweeps; sweeps
+  [ "$(grep -c '^add fault-.*-hook ' "$W/backlog-calls")" = 1 ] || fail "one hook fault ticket for both lanes: $(cat "$W/backlog-calls")"
+  grep -q 'waits-for: fault-.*-hook' "$HOME_D/state/e.status" || fail "lane e waits for the hook fault ticket"
+  [ "$(steers e)" = 0 ] || fail "the lane is not steered for a fault it cannot fix"
+  pass 'a hook fault of the environment files one ticket and the lanes wait for it, with no steer'
+}
+
+test_the_repair_landing_resumes_the_lane_that_waits_for_the_fault() {
+  local fault
+  home_world resume
+  lane s two .done-done.yaml; stopped s; printf 'working [at=1]: still at it\n' >> "$HOME_D/state/s.status"
+  lane a one .done-done.yaml; sweeps
+  ready s; sweeps; sweeps
+  fault=$(grep -o 'waits-for: fault-[A-Za-z0-9._-]*' "$HOME_D/state/s.status" | head -n 1); fault=${fault#waits-for: }
+  [ -n "$fault" ] || fail "s must wait for a fault ticket"
+  # the repair lane lands under the fault ticket's id: the landing check resumes the lanes that wait for it
+  lane "$fault" three work2.txt; sweeps
+  [ "$(steers s)" -ge 1 ] || fail "the lane s is resumed when the repair lands: $(cat "$W/send-calls" 2>/dev/null)"
+  grep -q "^s.--resolve-key" "$W/send-calls" || fail "the resume closes the lane blocker key in the same send: $(cat "$W/send-calls")"
+  pass 'the repair landing resumes the lane that waited for the fault'
+}
+
+test_a_missing_receipt_on_a_stopped_lane_starts_one_agent_that_is_told_to_publish_it() {
+  home_world noreceipt
+  lane m one; stopped m; rm -f "$HOME_D/state/m.run-receipt.json"
+  sweeps; sweeps
+  [ "$(relaunches m)" = 1 ] || fail "a lane with no receipt at its head gets one new agent: $(relaunches m)"
+  assert_contains "$(grep "^m" "$W/relaunch-calls")" "no completion receipt with verdict PASS" "the missing receipt is the first instruction"
+  [ "$(git -C "$PROJ" rev-parse trunk)" != "$(git -C "$PROJ" rev-parse fm/m)" ] || fail "nothing lands without the receipt"
+  : > "$W/alive-n"; lane n one work2.txt; rm -f "$HOME_D/state/n.run-receipt.json"; : > "$W/alive-n"
+  sweeps
+  [ "$(relaunches n)" = 0 ] || fail "a lane whose agent runs is steered, not relaunched: $(relaunches n)"
+  pass 'a missing receipt on a stopped lane starts one agent told to publish it, never a landing and never a self-made PASS'
 }
 
 test_a_conflict_touching_the_lanes_own_file_too_stays_the_lanes() {
@@ -123,6 +179,10 @@ test_a_conflict_touching_the_lanes_own_file_too_stays_the_lanes() {
 
 test_a_red_the_lane_caused_starts_one_new_agent_for_a_lane_stopped_at_built
 test_a_conflict_only_in_the_shared_registry_goes_to_the_lead_and_not_to_the_lane
+test_two_lanes_with_the_same_shared_fault_share_one_ticket
+test_the_environment_hook_fault_goes_to_one_ticket_not_the_lane
+test_the_repair_landing_resumes_the_lane_that_waits_for_the_fault
+test_a_missing_receipt_on_a_stopped_lane_starts_one_agent_that_is_told_to_publish_it
 test_a_conflict_touching_the_lanes_own_file_too_stays_the_lanes
 test_a_conflict_starts_one_new_agent_for_a_lane_whose_agent_died
 test_a_lane_whose_agent_runs_is_steered_and_not_relaunched

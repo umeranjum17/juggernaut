@@ -618,6 +618,68 @@ test_hook_uses_state_override() {
   pass "jg-turnend-guard: uses JG_STATE_OVERRIDE ahead of JG_HOME/state"
 }
 
+# --- the finished-work rule (jg-279) ------------------------------------------------------------------------------------------
+# A primary whose watcher is healthy, so the only thing that can stop the turn is a done line whose required next step went 10
+# minutes untaken: one Recon (lane rec-a, ticket T-a) that reported done 20 minutes ago and was never relayed. The real
+# core/next-step check and the real alert tool run behind the guard copy (core/ is linked in, so only the guard is a copy).
+FINISHED_WATCHER_PID=
+FINISHED_DIR=
+make_finished_work_primary() { # <name>: sets FINISHED_DIR (run in the test's own shell, so the watcher it starts outlives the call)
+  local dir pid identity now
+  dir=$(make_primary_dir "$TMP_ROOT/$1"); now=$(date +%s); FINISHED_DIR=$dir
+  ln -sn "$ROOT/core" "$dir/core"; mkdir -p "$dir/data"
+  printf 'kind=scout\nticket=T-a\n' > "$dir/state/rec-a.meta"
+  printf 'done [at=%s]: report ready in data/rec-a/report.md\n' "$((now - 1200))" > "$dir/state/rec-a.status"
+  sleep 60 > /dev/null 2>&1 &
+  pid=$!; FINISHED_WATCHER_PID=$pid
+  identity=$(watcher_identity "$dir" "$pid") || { kill "$pid" 2>/dev/null; fail "could not identify live watcher holder"; }
+  record_watcher_lock "$dir" "$pid" "$identity"
+  touch "$dir/state/.last-watcher-beat"
+}
+finished_work_tick() { JG_STATE_OVERRIDE="$1/state" JG_DATA_OVERRIDE="$1/data" bash "$ROOT/core/next-step/next-step.sh" tick "$1" || fail "the next-step tick failed"; }
+end_finished_work_watcher() { kill "$FINISHED_WATCHER_PID" 2>/dev/null || true; wait "$FINISHED_WATCHER_PID" 2>/dev/null || true; }
+
+test_hook_refuses_a_turn_end_while_finished_work_is_unhandled() {
+  local dir out status
+  make_finished_work_primary hook-finished-work; dir=$FINISHED_DIR
+  out=$(run_hook "$dir" false); status=$?
+  expect_code 0 "$status" "a done line that no tick has found unhandled yet must not stop a supervised turn: $out"
+  finished_work_tick "$dir"
+  out=$(run_hook "$dir" false); status=$?
+  expect_code 2 "$status" "the turn must not end while the done-unhandled alert is open"
+  assert_contains "$out" "FINISHED WORK HAS NO NEXT STEP" "the banner must say why"
+  assert_contains "$out" "rec-a: relay owed by Main - relay the findings, then record it: bin/jg-move.sh T-a relayed" "the banner must name the lane and how its step is taken"
+  out=$(run_hook "$dir" true); status=$?
+  expect_code 0 "$status" "the loop guard still lets the stop through after one refusal in a turn"
+  JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" bash "$ROOT/bin/jg-alert.sh" ack done-unhandled--rec-a >/dev/null || fail "could not acknowledge the alert"
+  out=$(run_hook "$dir" false); status=$?
+  expect_code 2 "$status" "an acknowledged alert must still hold the turn"
+  JG_HOME="$dir" JG_DATA_OVERRIDE="$dir/data" bash "$ROOT/bin/jg-move.sh" T-a relayed || fail "could not record the relay"
+  out=$(run_hook "$dir" false); status=$?
+  end_finished_work_watcher
+  expect_code 0 "$status" "the relay must lift the refusal at once, with no tick in between"
+  [ -z "$out" ] || fail "the guard printed after the step was taken: $out"
+  [ "$(JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" bash "$ROOT/bin/jg-alert.sh" word done-unhandled--rec-a)" = resolved ] || fail "the relay did not close the alert"
+  pass "jg-turnend-guard: refuses a turn end while a done-unhandled alert is open (acknowledged or not) and lets it end the moment the step is recorded"
+}
+
+test_hook_finished_work_refusal_is_bounded_in_claude_mode() {
+  local dir out status n
+  make_finished_work_primary hook-finished-work-budget; dir=$FINISHED_DIR
+  finished_work_tick "$dir"
+  for n in 1 2 3; do
+    out=$(run_hook_claude "$dir" true); status=$?
+    expect_code 2 "$status" "refusal $n of the budget must block the turn end, even after a continuation"
+    assert_contains "$out" "FINISHED WORK HAS NO NEXT STEP" "refusal $n must say why"
+  done
+  out=$(run_hook_claude "$dir" true); status=$?
+  end_finished_work_watcher
+  expect_code 0 "$status" "a refusal budget that is spent must let the turn end"
+  assert_contains "$out" "finished-work: the refusal budget (3) is spent" "the spent budget must say so, loudly"
+  assert_contains "$out" "rec-a: relay owed by Main" "the spent budget must still name the lane"
+  pass "jg-turnend-guard: the finished-work refusal ends after 3 consecutive refusals in a session, with a notice naming the lane"
+}
+
 test_hook_loop_guard_allows_retry() {
   local dir out status
   dir=$(make_primary_dir "$TMP_ROOT/hook-loopguard")
@@ -2899,6 +2961,8 @@ test_hook_x_mode_only_blocks_in_default_mode
 test_hook_registered_check_only_blocks_with_check_banner
 test_hook_ignores_repo_state_when_jg_home_set
 test_hook_uses_state_override
+test_hook_refuses_a_turn_end_while_finished_work_is_unhandled
+test_hook_finished_work_refusal_is_bounded_in_claude_mode
 test_hook_loop_guard_allows_retry
 test_hook_blocks_in_squad_lead_own_home
 test_hook_silent_in_idle_squad_lead_home

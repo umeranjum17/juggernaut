@@ -36,14 +36,14 @@ Before switching or spawning against Orca:
 
 ## Spawn
 
-Use `bin/jg-spawn.sh` so Juggernaut creates the brief, worktree, terminal, metadata, status file, and watcher surface together.
+Use `jg crew spawn` so Juggernaut creates the brief, worktree, terminal, metadata, status file, and watcher surface together.
 Pass `--backend orca` for a one-off Orca task, or rely on the already-selected Orca backend when that selection is intentional.
 
 After spawn, check the task with Juggernaut helpers:
 
-- `bin/jg-peek.sh jg-<id>` for launch failures, trust dialogs, or first output.
+- `jg radio peek jg-<id>` for launch failures, trust dialogs, or first output.
 - `state/<id>.meta` for `backend=orca`, `terminal=`, `orca_worktree_id=`, and `worktree=`.
-- `bin/jg-crew-state.sh <id>` when the current run state matters.
+- `jg crew crew-state <id>` when the current run state matters.
 - `bin/jg-watch.sh` whenever there are tasks in flight and this session owns supervision.
 
 Do not manually create the Orca worktree or terminal for a normal Juggernaut task.
@@ -51,8 +51,8 @@ Do not manually patch metadata to make an externally-created Orca terminal look 
 
 ## Supervision
 
-Use `bin/jg-peek.sh`, `bin/jg-send.sh`, `bin/jg-crew-state.sh`, and `bin/jg-teardown.sh` for routine operation.
-For steer messages, use `bin/jg-send.sh <id> '...'`; the stable `jg-<id>` alias also works, and ordinary local text steers may contain newlines because they ride the durable inbox.
+Use `jg radio peek`, `jg radio send`, `jg crew crew-state`, and `jg crew teardown` for routine operation.
+For steer messages, use `jg radio send <id> '...'`; the stable `jg-<id>` alias also works, and ordinary local text steers may contain newlines because they ride the durable inbox.
 Keep initial scope in the task brief; a temporary file remains useful when the instruction includes supporting material the worker should inspect separately.
 
 When supervising, treat `state/<id>.meta` as the routing record and Orca's own ids as backend implementation details.
@@ -83,10 +83,10 @@ Ship work can be torn down only after the work is landed by its project mode.
 Keep Orca smoke tests focused on lifecycle plumbing:
 
 1. Select Orca intentionally for a disposable task or Recon.
-2. Spawn through `bin/jg-spawn.sh`.
+2. Spawn through `jg crew spawn`.
 3. Confirm metadata records the Orca backend, terminal, Orca worktree id, and isolated worktree path.
-4. Verify `bin/jg-peek.sh`, a short `bin/jg-send.sh` steer, watcher wake behavior, and `bin/jg-crew-state.sh`.
-5. Tear down through `bin/jg-teardown.sh` after the task is safely disposable or landed.
+4. Verify `jg radio peek`, a short `jg radio send` steer, watcher wake behavior, and `jg crew crew-state`.
+5. Tear down through `jg crew teardown` after the task is safely disposable or landed.
 6. Restore the previous backend selection if Orca was selected only for the smoke test.
 
 Do not mix a backend smoke test with unrelated feature work.

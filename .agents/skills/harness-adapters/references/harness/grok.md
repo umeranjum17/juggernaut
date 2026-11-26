@@ -43,13 +43,13 @@ The project picker and the folder-trust gate are separate dialogs.
 On 2026-09-24, on those same first dispatches, Grok 1.0.41 rendered a folder-trust gate in a linked git worktree.
 The dialog printed the primary checkout path, because a linked worktree's git root resolves to the main one, so the text reads exactly like a worktree-isolation violation when isolation is intact.
 Check the worker's real location with `/proc/<pid>/cwd`, never the path the dialog prints.
-Answer the gate with the key path's Enter (`../../../bin/jg-send.sh <target> --key Enter`).
-`../../../bin/jg-send.sh` carries only Escape, Enter, and C-c, and a literal `y` has no sanctioned route.
+Answer the gate with the key path's Enter (`jg radio send-key <target> Enter`).
+`script: ../../../bin/jg-send.sh` carries only Escape, Enter, and C-c, and a literal `y` has no sanctioned route.
 On 2026-09-24 Grok 1.0.41 persisted that answer to `~/.grok/trusted_folders.toml`, keyed by the path the dialog prints.
-That is the same store `../../../bin/jg-spawn.sh` deliberately does not write and calls a high-blast-radius write.
+That is the same store `script: ../../../bin/jg-spawn.sh` deliberately does not write and calls a high-blast-radius write.
 In a linked worktree the trust therefore lands on the primary checkout, not the disposable copy, and it persists for every later Grok run there.
 This silently enables Grok project hooks for that checkout.
-Answering the gate is nonetheless the sanctioned route, because `../../../bin/jg-send.sh` has no other way to clear it.
+Answering the gate is nonetheless the sanctioned route, because `script: ../../../bin/jg-send.sh` has no other way to clear it.
 It is a knowing exception to the store-avoidance stance, not an oversight, so expect the new entry to appear in that file.
 
 ## Training opt-in
@@ -77,18 +77,18 @@ Project hooks require folder trust in `~/.grok/trusted_folders.toml`, which the 
 The spawn installs guarded global `jg-turn-end.json` and `jg-turn-end.sh`.
 They act only when workspace `.jg-grok-turnend` matches the registry under `~/.grok/hooks/jg-turn-end.d/`, then touch the task's `state/<id>.turn-ended` through always-set `GROK_WORKSPACE_ROOT`, which equals the worktree.
 This stays outside the worktree, needs no trust grant, and writes only Juggernaut files.
-`../../../bin/jg-teardown.sh` removes the gitignored pointer before pooling.
+`script: ../../../bin/jg-teardown.sh` removes the gitignored pointer before pooling.
 Squad Leads skip it because idle is healthy and ordinary stale-pane detection does not apply.
 
 ## Primary integration
 
 Verified on 2026-07-28 with 0.2.112 and genuine pre-native 0.2.73.
-`.grok/hooks/jg-primary-turnend-guard.json` invokes `../../../bin/jg-turnend-guard-grok.sh`.
+`.grok/hooks/jg-primary-turnend-guard.json` invokes `script: ../../../bin/jg-turnend-guard-grok.sh`.
 The exact running Stop payload selects same-process continuation on 0.2.112; 0.2.73 omits that capability and needs one guarded `grok --resume`.
 `../../../docs/turnend-guard.md` owns adaptive and malformed-input behavior.
 
 Grok also loads Claude project settings, so Claude entries for Grok-covered events stand down under `GROK_AGENT` or `GROK_HOOK_EVENT`; that owner records the exact set and why `GROK_SESSION_ID` is excluded.
-Project-local hooks require launch-time `--trust`; without it the guard steps aside and `../../../bin/jg-guard.sh` is the next-command alarm.
-Watcher supervision remains tracked background notification around `../../../bin/jg-watch-arm.sh`, not Pi-style extension ownership.
-In a home with `config/supervision-host` and no `config/supervision-host-off` the session-start block renders that background call as `../../../bin/jg-supervision-host.sh park`, with Claude's print mode as its headless engine; [`supervision-host.md`](../../../../../docs/supervision-host.md) owns the host.
+Project-local hooks require launch-time `--trust`; without it the guard steps aside and `script: ../../../bin/jg-guard.sh` is the next-command alarm.
+Watcher supervision remains tracked background notification around `script: ../../../bin/jg-watch-arm.sh`, not Pi-style extension ownership.
+In a home with `config/supervision-host` and no `config/supervision-host-off` the session-start block renders that background call as `script: ../../../bin/jg-supervision-host.sh park`, with Claude's print mode as its headless engine; [`supervision-host.md`](../../../../../docs/supervision-host.md) owns the host.
 PreToolUse blocks directly, but every `$VAR` in a hook command needs inline `:-default` or Grok refuses the hook.

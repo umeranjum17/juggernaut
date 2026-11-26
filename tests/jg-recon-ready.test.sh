@@ -6,12 +6,13 @@
 #    and its open decisions; a rerun prints nothing; a revised report is announced again;
 # b) a Recon whose gate refuses, a ship, a Recon still working and a Recon with no report print nothing;
 # c) a Recon waiting on its owner (paused, wait=owner) arms an owner timer until its alert exists and none after it.
+# d) delivery recovers a board commit after an interrupted post, then relays the move exactly once.
 # Usage: tests/jg-recon-ready.test.sh
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
-d=$(mktemp -d)
-trap 'rm -rf -- "$d"' EXIT
-H=$d/home
+fixture_root=$(mktemp -d)
+trap 'rm -rf -- "$fixture_root"' EXIT
+H=$fixture_root/home
 mkdir -p "$H/state" "$H/data" "$H/bin"
 LOG=${DONE_DONE_EVIDENCE_ROOT:+$DONE_DONE_EVIDENCE_ROOT/recon-ready.log}
 fails=0
@@ -62,7 +63,7 @@ has "counts the open decisions" "$out" "open decisions: 1"
 check "a rerun prints nothing" "$("$ROOT/core/recon-ready/ready.sh" check "$H")" ""
 printf '\nrevised\n' >> "$H/data/r1/report.md"
 has "a revised report is announced again" "$("$ROOT/core/recon-ready/ready.sh" check "$H")" "recon-ready: r1"
-check "a refused gate leaves no record" "$([ -e "$H/state/recon-ready/r2" ] && echo yes || echo no)" no
+check "a refused gate leaves no record" "$( [ -e "$H/state/recon-ready/r2" ] && echo yes || echo no )" no
 check "no record for a ship, a working Recon or a missing report" "$(ls "$H/state/recon-ready")" r1
 unset JG_RECON_READY_GATE
 mk q1 scout 'needs-decision [at=1]: open call' "$REPORT"
@@ -74,6 +75,53 @@ quiet() ( export JG_HOME=$ROOT STATE=$H/state; . "$ROOT/bin/jg-classify-lib.sh";
 check "a Recon with no alert keeps its owner timer" "$(quiet w1)" rings
 printf 'abc\n' > "$H/state/recon-ready/w1"
 check "a Recon with its alert arms no owner timer" "$(quiet w1)" quiet
+
+# d) a board commit followed by a failed post must be recovered by delivery ticks.
+(
+  set -euo pipefail
+  D=$fixture_root/relay
+  HOME_D=$D/home
+  mkdir -p "$HOME_D/state" "$HOME_D/data" "$HOME_D/config" "$D/bin"
+  printf 'kind=scout\nticket=t-delivery\n' > "$HOME_D/state/recon-delivery.meta"
+  printf 'done [at=1]: report ready\n' > "$HOME_D/state/recon-delivery.status"
+  mkdir -p "$HOME_D/data/recon-delivery"
+  printf 'Recon depth: quick\n' > "$HOME_D/data/recon-delivery/brief.md"
+  printf '%s\n' "$REPORT" > "$HOME_D/data/recon-delivery/report.md"
+  printf '{"schema":2,"items":[]}\n' > "$D/board.json"
+  cat > "$D/post" <<'POST'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$1" = post ]
+board=$2
+[ "$3" = --kind ] && [ "$4" = report ] && [ "$5" = --from ]
+from=$6
+jq --slurpfile card "$from" '.items += $card' "$board" > "$board.tmp"
+mv "$board.tmp" "$board"
+printf 'invocation\n' >> "${JG_RECON_TEST_POST_LOG:?}"
+exit 1
+POST
+  chmod +x "$D/post"
+  export HOME=$HOME_D XDG_CONFIG_HOME=$HOME_D/config XDG_STATE_HOME=$HOME_D/state XDG_DATA_HOME=$HOME_D/data
+  export JG_PROOF_BOARD=$D/board.json
+  export JG_RECON_READY_GATE=$ROOT/bin/jg-recon-gate.sh
+  export JG_RECON_READY_POST=$D/post
+  export JG_RECON_TEST_POST_LOG=$D/post.log
+  export JG_RECON_READY_BACKLOG=$D/no-backlog
+  export JG_RECON_READY_HOLD=$D/no-hold
+  tick() { bash "$ROOT/bin/jg-delivery-tick.sh" "$HOME_D"; }
+  fails_before=$fails
+  tick > "$D/tick1.log" 2>&1
+  has "first tick reports owed relay" "$(cat "$D/tick1.log")" "recon-ready: relay for recon-delivery is still owed"
+  check "board commit contains one report card" "$(jq '.items | length' "$D/board.json")" 1
+  has "report card title contains the report answer" "$(jq -r '.items[0].title' "$D/board.json")" "Use one queue for all alerts."
+  check "first tick has no relayed move" "$(awk -F '\t' '$4 == "relayed" {n++} END {print n+0}' "$HOME_D/data/moves.log" 2>/dev/null || echo 0)" 0
+  tick > "$D/tick2.log" 2>&1
+  tick > "$D/tick3.log" 2>&1
+  check "exactly one move is recorded as relayed" "$(awk -F '\t' '$2 == "t-delivery" && $4 == "relayed" {n++} END {print n+0}' "$HOME_D/data/moves.log" 2>/dev/null || echo 0)" 1
+  check "recovery keeps exactly one report card" "$(jq '.items | length' "$D/board.json")" 1
+  check "post stub was invoked exactly once" "$(wc -l < "$D/post.log" | tr -d ' ')" 1
+  [ "$fails" -eq "$fails_before" ] || exit 1
+)
 
 [ "$fails" -eq 0 ] || { say "recon-ready: $fails failed"; exit 1; }
 say "recon-ready: all passed"

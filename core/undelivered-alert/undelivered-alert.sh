@@ -31,6 +31,6 @@ kind=$(field kind); key=$(field key)
 text=$(printf 'undelivered-alert: %s captain message(s) not delivered; newest: kind=%s key=%s reason=%s. Re-word and send it through the normal path.' \
   "$((now - was))" "${kind:-unknown}" "${key:-unknown}" "${reason:-unknown}")
 # Raise the undelivered alert (bin/jg-alert.sh); its holder reads the wake `--deliver` appends. The count moves only once it is raised.
-ALERT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../bin" && pwd -P)/jg-alert.sh
-JG_STATE_OVERRIDE=$FMH/state "$ALERT" raise undelivered "captain-message-$now" --note "$text" --deliver || exit 1
+JG_HOME=$FMH JG_STATE_OVERRIDE=$FMH/state "$FMH/bin/jg-alert.sh" \
+  raise undelivered "captain-message-$now" --note "$text" --deliver || exit 1
 printf '%s\n' "$now" > "$MEM/count"

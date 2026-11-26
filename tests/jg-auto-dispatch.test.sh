@@ -37,8 +37,9 @@ PY
   # The captain-hold stand-in: b has an open decision linked to it, the others have none.
   cat > "$d/hold" <<'SH'
 #!/usr/bin/env bash
-[ "$1" = blocking ] && [ "$2" = b ] && { printf 'jg-card\t[captain-ask] decision\n'; exit 0; }
-exit 1
+[ "$*" = 'blocking --batch' ] || exit 2
+printf 'blocking-batch: ok\n'
+if grep -qx b; then printf 'b\tjg-card\t[captain-ask] decision\n'; fi
 SH
   chmod +x "$d/hold"
   printf '2\n' > "$d/config/lane-target"
@@ -193,7 +194,7 @@ printf 'defer\n' > "$D6/spawn-mode-a1"; printf 'fail\n' > "$D6/spawn-mode-a2"; p
 # b is held by an open decision in the shared stand-in; the real route here is a1, a2 and a third ticket made from c.
 mkdir -p "$D6/data/c"; printf 'a brief\n' > "$D6/data/c/brief.md"
 rb() { home_env "$D6" env SPAWN_LOG="$D6/spawn.log" JG_AUTO_DISPATCH_SPAWN="$D6/spawn" JG_AUTO_DISPATCH_PROJECT_MODE="$ROOT/bin/jg-project-mode.sh" bash "$CHECK" check "$D6" 2>&1; }
-printf '#!/usr/bin/env bash\nexit 1\n' > "$D6/hold"   # no open decision for anyone in this home
+printf '#!/usr/bin/env bash\necho "blocking-batch: ok"\n' > "$D6/hold"   # no open decision for anyone in this home
 out=$(rb) || fail "the first beat failed: $out"
 for t in a1 a2 b; do wait_for_result_in "$D6/data/auto-dispatch/$t.start.1" || fail "the start of $t did not record a result"; done
 out=$(rb)
@@ -241,7 +242,7 @@ pass "a refused start waits for the lead's new approval and then starts"
 D7=$TMP_ROOT/home-preflight
 make_home "$D7"
 cp "$D2/spawn" "$D7/spawn"; printf 'on\n' > "$D7/config/auto-dispatch"; printf '6\n' > "$D7/config/lane-target"
-printf '#!/usr/bin/env bash\nexit 1\n' > "$D7/hold"
+printf '#!/usr/bin/env bash\necho "blocking-batch: ok"\n' > "$D7/hold"
 for t in a1 a2 b; do
   approve "$D7" "$t" >/dev/null || fail "approve-dispatch $t was refused"
   mkdir -p "$D7/data/$t"

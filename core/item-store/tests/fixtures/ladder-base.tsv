@@ -27,6 +27,7 @@ alert	quota-unused	the share of an account's window that is left is over the sha
 alert	quota-blind	the newest quota reading of an account that lanes use is old	1800	P2	0	account-no-lane
 alert	worker-stopped	an agent that someone waits for was ended or lost: an unread steer in its inbox, a steer newer than its last status line, an open Recon critic round, or a relaunch after its done line	0	P1	3	never
 alert	judge-split	two judges (the tip run, the verify, the nightly run) gave one commit tree two different verdicts	0	P1	2	never
+alert	done-unhandled	a Recon or critic lane reported done and nobody took the next step it owes (bin/jg-facts-lib.sh jg_fact_next_step) within 10 minutes	600	P1	3	never
 rule	I1	supervision-down	home	stuck-wait,lost-worker,undelivered,ready-idle,slow-delivery	nobody is watching, so every wait would fire
 rule	I2	line-red	project	slow-delivery,stranded	they wait for the line, not for themselves
 rule	I3	capacity	route	lost-worker,stuck-wait	the lanes are stopped by the same cause

@@ -1,15 +1,15 @@
 Mode: Codex foreground checkpoint.
 
 When this session owns supervision and away mode is not active:
-1. Drain first with `bin/jg-wake-drain.sh`.
-   After handling all emitted wakes and reconciling open decisions and unread status lines, run the exact `--ack-through` command printed as `WAKE_ACK_REQUIRED`; until then the work remains durable for idempotent re-handling after interruption.
+1. Drain first with `jg radio drain`.
+   After handling all emitted wakes and reconciling open decisions and unread status lines, run the `jg radio ack` command when provided in the drain result; until then the work remains durable for idempotent re-handling after interruption.
 2. Source `__JG_X_MODE_ENV__` first when Relay is active.
-3. First cycle: run one foreground watcher checkpoint with `bin/jg-watch-checkpoint.sh --seconds "${JG_CODEX_WATCH_CHECKPOINT:-180}"`.
+3. First cycle: run one foreground watcher checkpoint with `jg radio watch-checkpoint --seconds "${JG_CODEX_WATCH_CHECKPOINT:-180}"`.
 4. Ordinary wake: if the command prints `signal:`, `stale:`, `check:`, or `heartbeat`, drain queued wakes, handle that wake, then start the next checkpoint.
 5. If the command prints `checkpoint:` with no wake, drain queued wakes anyway, process any queued user message now visible to Codex, then start the next checkpoint.
 6. Never use shell `&` or Codex background tasks for Juggernaut watcher supervision.
-7. Do not run `bin/jg-watch-arm.sh` as Codex's normal supervision command.
-   If it is ever shelled anyway, a backgrounded, piped, or bundled anti-pattern is denied automatically by the PreToolUse seatbelt (`bin/jg-arm-pretool-check.sh`) registered in `.codex/hooks.json`.
+7. Do not run `jg radio watch-arm` as Codex's normal supervision command.
+   If it is ever shelled anyway, a backgrounded, piped, or bundled anti-pattern is denied automatically by the PreToolUse seatbelt (script: `bin/jg-arm-pretool-check.sh`) registered in `.codex/hooks.json`.
 8. Failure or missing cycle only: drain queued wakes, inspect the failure, then start a fresh foreground checkpoint.
 
 Codex cannot reason while a foreground tool call is running.

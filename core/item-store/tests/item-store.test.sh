@@ -13,7 +13,7 @@ run() {   # <script> <expected last line>
     echo "ok $1: $got"
   fi
 }
-run ladder_fields.py '87 ladder values read from the store: 87 PASS, 0 FAIL'
+run ladder_fields.py '94 ladder values read from the store: 94 PASS, 0 FAIL'
 run prove.py '150 cases: 150 PASS, 0 FAIL; mutants killed 20 of 20'
 run synthesis_cases.py '5 synthesis cases: 5 PASS, 0 FAIL'
 run clause_mutants.py '39 clauses in multi-clause triggers: 39 caught by a case, 0 not'

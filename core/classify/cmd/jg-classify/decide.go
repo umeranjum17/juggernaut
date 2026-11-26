@@ -346,6 +346,47 @@ func foldFile(file, kind string) string {
 	return open
 }
 
+// blockedSince uses the same decision transitions as the watcher. The result
+// is the line number and epoch of the current continuous block. An unstamped
+// opener has epoch zero, so a caller can time it from its first observation.
+func blockedSince(file string) (string, bool) {
+	lines, ok := plainStatusLines(file)
+	if !ok {
+		return "", false
+	}
+	inHome(file)
+	open, since := "", ""
+	for i, l := range lines {
+		next := foldLine(open, l, "ship")
+		if next == open {
+			continue
+		}
+		open = next
+		if !hasBlocked(open) {
+			since = ""
+		} else if since == "" {
+			at, ok := atEpoch(l)
+			if !ok {
+				at = "0"
+			}
+			since = fmt.Sprintf("%d\t%s", i+1, at)
+		}
+	}
+	if !hasBlocked(gateOverlay(open)) {
+		since = ""
+	}
+	return since, true
+}
+
+func hasBlocked(open string) bool {
+	for _, record := range setRecords(open) {
+		if strings.SplitN(record, "\t", 3)[1] == "blocked" {
+			return true
+		}
+	}
+	return false
+}
+
 // currentLine resolves the log's current declaration: the most recently opened decision, else a
 // standing declared wait, else the latest event.
 func currentLine(file, kind string) string {
@@ -511,6 +552,13 @@ func decideCommand(cmd string, a []string, out *os.File) (code int, handled bool
 		return put(setVerb(arg(0), arg(1))), true
 	case "open-decisions": // open-decisions <file> [kind]
 		return put(openDecisions(arg(0), arg(1))), true
+	case "blocked-since":
+		value, ok := blockedSince(arg(0))
+		if !ok {
+			fmt.Fprintf(os.Stderr, "jg-classify: cannot read blocker status %s\n", arg(0))
+			return 2, true
+		}
+		return put(value), true
 	case "current-line":
 		return line(currentLine(arg(0), arg(1))), true
 	case "own-open-decisions":

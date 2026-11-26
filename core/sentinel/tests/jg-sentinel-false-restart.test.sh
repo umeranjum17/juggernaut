@@ -17,6 +17,10 @@
 #   - a second real change runs exactly one more pass;
 #   - a lane not settled yet keeps its episode's pass going each tick, with no restart
 #     reported, until it settles.
+#   - on a fresh Main home and one lead home, with a stepped clock, unchanged homes cost no
+#     second delivery pass, a status append in the lead selects only the lead, and a missed
+#     stop-detector deletion is reconciled by the lead's due repair. Passes are counted per
+#     home through a fixture wrapper around the real jg-delivery-tick.sh.
 set -u
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
@@ -154,3 +158,69 @@ expect "settled" 3 1
 tick
 expect "after settle" 3 1
 pass "an unsettled lane continues its episode without a restart report, then settles and stops"
+
+# Delivery passes on a fresh Main home and one lead home, on a stepped clock. Only date +%s is
+# shimmed; file mtimes keep the real clock. Main is slot 0, the lead slot 1 (repair 300s).
+# Main and lead share one fixture bin: the real tick sits beside a wrapper that sets the
+# target home's own trace file, then runs the real tick through bash.
+M=$d/main2 L=$d/lead2
+MT=$M/test-delivery-trace LT=$L/test-delivery-trace
+mkdir -p "$M/data" "$M/config" "$M/state" "$L/data" "$L/config" "$L/state" "$d/shim"
+cp -a "$REPO/bin" "$M/bin"; ln -sn "$REPO/core" "$M/core"; ln -sn "$M/bin" "$L/bin"
+mv "$M/bin/jg-delivery-tick.sh" "$M/bin/jg-delivery-tick.real.sh"
+cat > "$M/bin/jg-delivery-tick.sh" <<WRAP
+#!/usr/bin/env bash
+# Fixture wrapper: trace per target home, then the real tick beside this file.
+here=\${BASH_SOURCE[0]%/*}
+home=
+for a in "\$@"; do
+  case "\$a" in '$M'|'$L') home=\$a; break ;; esac
+done
+[ -n "\$home" ] || home=\${JG_HOME:-}
+JG_DELIVERY_TICK_TRACE=\$home/test-delivery-trace
+export JG_DELIVERY_TICK_TRACE
+exec bash "\$here/jg-delivery-tick.real.sh" "\$@"
+WRAP
+chmod +x "$M/bin/jg-delivery-tick.sh"
+printf -- '- lead (home: %s)\n' "$L" > "$M/data/squad_leads.md"
+cat > "$d/shim/date" <<SH
+#!/usr/bin/env bash
+[ "\${1:-}" = +%s ] && [ -n "\${FAKE_NOW:-}" ] && { echo "\$FAKE_NOW"; exit 0; }
+exec $(printf '%q' "$(command -v date)") "\$@"
+SH
+chmod +x "$d/shim/date"
+step() {  # <epoch>: one production sentinel tick for Main at that fake time; its status is returned
+  FAKE_NOW=$1 JG_SENTINEL_DELIVERY_REPAIR_SECS=300 PATH="$d/shim:$d/stub:$PATH" HOME="$d/home-dir" JG_HOME=$M \
+    JG_SENTINEL_HERDR_SESSION=$SESSION JG_TMP_ROOT=$d/tmproot JG_SENTINEL_TMP_SWEEP_SECS=0 \
+    JG_SENTINEL_DELIVERY_TIMEOUT=30 "$ENTRY" tick >/dev/null 2>&1
+}
+traced() {  # <label> <main passes> <lead passes>: real delivery trace lines per home
+  [ "$(count ' pass ' "$MT")" = "$2" ] || fail "$1: Main $(count ' pass ' "$MT") delivery passes, wanted $2"
+  [ "$(count ' pass ' "$LT")" = "$3" ] || fail "$1: lead $(count ' pass ' "$LT") delivery passes, wanted $3"
+}
+T=$(( $(date +%s) / 300 * 300 ))
+step "$T" || fail "baseline: the tick did not succeed"
+traced "baseline" 1 1
+step "$((T + 60))" || fail "+60: the tick did not succeed"
+traced "unchanged +60" 1 1
+pass "unchanged Main and lead homes each cost no second delivery pass"
+sleep 0.1
+printf 'working [at=%s]: Umer demo\n' "$T" >> "$L/state/umer-demo.status"
+step "$((T + 120))" || fail "+120: the tick did not succeed"
+traced "lead status append +120" 1 2
+pass "a status append in only the lead selects only the lead"
+REC=$L/state/.waiting-timers/.stops/umer.test
+mkdir -p "$L/state/.stops" "$L/state/.waiting-timers/.stops"
+: > "$L/state/.stops/umer.test"
+printf 'test\t1\t0\t0\tk\t0\t0\n' > "$REC"
+rm -f "$L/state/.stops/umer.test"
+step "$((T + 180))" || fail "+180: the tick did not succeed"
+traced "missed deletion before repair" 1 2
+[ -e "$REC" ] || fail "the stop timer record was cleared before the repair was due"
+step "$((T + 240))" || fail "+240: the tick did not succeed"
+traced "lead repair +240" 1 3
+[ ! -e "$REC" ] || fail "the lead's due repair did not reconcile the stop timer record"
+pass "the due repair reconciles a stop detector deleted without a notification"
+step "$((T + 300))" || fail "+300: the tick did not succeed"
+traced "main repair +300" 2 3
+pass "Main's own repair is due at +300s"

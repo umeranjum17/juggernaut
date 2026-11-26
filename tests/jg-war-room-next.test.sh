@@ -72,6 +72,7 @@ questions_of() { jg_test_backlog "$HOME_DIR" questions --ticket "$1" --json 2>/d
 new_council() {  # <id> [start flags...] -> sets V1 V2 V3 (the variant tasks)
   local id=$1; shift
   jg_test_add "$HOME_DIR" "$id" "[feature] War room council"
+  "$ROOT/bin/jg-muster-depth.sh" record --ticket "$id" --depth skip --reason "fixture startup" >/dev/null || fail "record skip"
   local out
   out=$(war_room start "$id" --project proj --angles alpha,bravo,gamma --depth standard --harness codex --model gpt-5.5 --effort high "$@") \
     || fail "$id: start should make three lanes live: $out"
@@ -89,7 +90,8 @@ out=$(handoff draft "$V1") || fail "T1 the draft should be recorded: $out"
 critic=''
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   critic=$(child_titled "$council" 'alpha variant Recon critic' || true)
-  [ -n "$critic" ] && [ "$(handoff assignee "$V1" | cut -f1)" = "$(task_of "${critic:-none}")" ] && break
+  [ -n "$critic" ] && [ "$(handoff assignee "$V1" | cut -f1)" = "$(task_of "$critic")" ] &&
+    [ "$(starts_of "$(task_of "$critic")")" = 1 ] && break
   /bin/sleep 0.5
 done
 [ -n "$critic" ] || fail "T1 no critic child within 5 s of the draft"
@@ -143,7 +145,7 @@ out=$(war_room next "$council") || fail "T3 next should exit 0: $out"
 assert_contains "$out" "owner approval asked" "T3 next should ask the owner: $out"
 [ "$(questions_of "$council")" = 1 ] || fail "T3 the council should hold one question, holds $(questions_of "$council")"
 jg_test_backlog "$HOME_DIR" questions --ticket "$council" --json | grep -q 'plan-approval' || fail "T3 the question lacks the must plan-approval"
-jg_test_backlog "$HOME_DIR" questions --ticket "$council" --json | grep -q "$plan_dir/plan.json" || fail "T3 the question lacks the plan path"
+grep -Fxq "$plan_dir/plan.json" "$HOME_DIR/data/war-room/$council/plan-asked" || fail "T3 plan-asked lacks the plan path"
 out=$(war_room next "$council") || fail "T3 a second next should exit 0: $out"
 case $out in *"owner approval asked"*) fail "T3 a second next asked again: $out" ;; esac
 [ "$(questions_of "$council")" = 1 ] || fail "T3 a second next held again"
@@ -197,7 +199,7 @@ out=$(handoff draft "$stask") || fail "T6 the synthesis draft should be recorded
 scritic=''
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   scritic=$(child_titled "$council" 'synthesis Recon critic' || true)
-  [ -n "$scritic" ] && break
+  [ -n "$scritic" ] && [ "$(handoff assignee "$stask" | cut -f1)" = "$(task_of "$scritic")" ] && break
   /bin/sleep 0.5
 done
 [ -n "$scritic" ] || fail "T6 the synthesis got no separate critic within 5 s of its draft"
@@ -207,6 +209,7 @@ pass "T6 fast: no variant critic, a deep synthesis, its own critic assigned"
 # T7: a refused combination writes nothing.
 council=jg-wnd
 jg_test_add "$HOME_DIR" "$council" "[feature] War room refusal"
+"$ROOT/bin/jg-muster-depth.sh" record --ticket "$council" --depth skip --reason "fixture startup" >/dev/null || fail "record skip"
 out=$(war_room start "$council" --project proj --angles alpha --depth deep --no-variant-critics --harness codex --model gpt-5.5 --effort high); rc=$?
 [ "$rc" = 2 ] || fail "T7 --no-variant-critics with deep variants should exit 2, exited $rc: $out"
 assert_contains "$out" "needs --depth standard" "T7 the refusal should name the cause: $out"

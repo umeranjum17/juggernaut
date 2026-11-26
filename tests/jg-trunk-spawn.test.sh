@@ -8,6 +8,7 @@
 # T2 a local-trunk ship on that project spawns, and its isolated copy is on the trunk tip, not on the default branch.
 # T4 after a rollover the trunk is on trunk-v2: the lane starts on that tip, records base=<tip>, and its brief names trunk-v2, not the older trunk.
 # T3 a project registered direct-PR keeps spawning a pull-request lane as before.
+# T5 a relaunch keeps the mode the task was spawned with: a direct-PR task relaunches after its project is registered local-trunk, a local-trunk task relaunches after the project is registered direct-PR, and the registry still governs a fresh spawn.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -27,6 +28,8 @@ jg_test_spawn_home "$HOME_DIR"
 jg_test_beads_home "$HOME_DIR"
 FAKEBIN=$(make_spawn_fakebin "$W/fake")
 jg_test_fake_sleep_noop "$FAKEBIN"
+# The stand-in terminal reports an idle shell, so T5's relaunch sees an endpoint with no agent in it.
+sed -i '/^set -u$/a case "$*" in *pane_current_command*) echo bash; exit 0 ;; esac' "$FAKEBIN/tmux"
 printf 'wait_pressure=100\nalert_pressure=100\nwait_available_gb=0\nalert_available_gb=0\n' > "$HOME_DIR/config/host-memory"
 
 N=0
@@ -51,6 +54,7 @@ git -C "$PROJ" branch --no-track trunk origin/main; mkdir -p "$HOME_DIR/state"; 
 ship direct-PR
 expect_code 0 "$rc" "T3 a direct-PR project with a stray trunk record must still spawn a pull-request lane: $out"
 [ "$(git -C "$wt" rev-parse HEAD)" = "$(git -C "$PROJ" rev-parse origin/main)" ] || fail "T3 a direct-PR lane must not be moved onto a trunk"
+pr_id=$id; pr_wt=$wt # a task spawned while the project was registered direct-PR: T5 relaunches it after the registry flips
 git -C "$PROJ" branch -D trunk >/dev/null; rm -f "$HOME_DIR/state/trunk-tip-proj"
 printf -- '- proj [local-trunk] - fixture (added 2026-11-07)\n' > "$HOME_DIR/data/projects.md"
 # Initialize a real trunk one commit ahead of origin/main.
@@ -65,6 +69,13 @@ for mode in direct-PR no-mistakes; do
   [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "T1 the refused spawn wrote a task record"
 done
 pass "T1 a pull-request lane on a project with a trunk is refused by name"
+
+# T5: the registry flipped to local-trunk after $pr_id was spawned direct-PR (T1 above shows a fresh direct-PR spawn is still refused).
+out=$(JG_FAKE_DUPLICATE_WINDOW="jg-$pr_id" jg_test_run_spawn "$HOME_DIR" "$pr_wt" "$FAKEBIN" "$pr_id" --relaunch); rc=$?
+expect_code 0 "$rc" "T5 a relaunch must honour the task's recorded direct-PR mode, not the registry's local-trunk: $out"
+[ "$(sed -n 's/^mode=//p' "$HOME_DIR/state/$pr_id.meta")" = direct-PR ] || fail "T5 the relaunch must keep the recorded mode"
+assert_contains "$(cat "$HOME_DIR/data/$pr_id/launch-brief.md")" "Delivery contract: mode=direct-PR" "T5 the relaunched launch contract must keep direct-PR"
+pass "T5 a relaunch keeps the recorded mode after the registry moved to local-trunk"
 
 # T2
 ship local-trunk
@@ -128,5 +139,16 @@ expect_code 0 "$rc" "T4 a lane after a rollover must spawn: $out"
 # shellcheck disable=SC2016 # literal backticks in the brief text
 assert_contains "$(cat "$HOME_DIR/data/$id/brief.md")" 'the `trunk-v2` branch of the project' "T4 the brief must name the real trunk branch"
 pass "T4 a lane after a rollover starts on the trunk tip, records base=<tip>, and its brief names that branch"
+
+# T5, the other way: the registry leaves local-trunk after the lane above was spawned local-trunk; its relaunch keeps local-trunk, a fresh local-trunk spawn is refused.
+lt_id=$id; lt_wt=$wt
+printf -- '- proj [direct-PR] - fixture (added 2026-11-07)\n' > "$HOME_DIR/data/projects.md"
+out=$(JG_FAKE_DUPLICATE_WINDOW="jg-$lt_id" jg_test_run_spawn "$HOME_DIR" "$lt_wt" "$FAKEBIN" "$lt_id" --relaunch); rc=$?
+expect_code 0 "$rc" "T5 a relaunch must honour the task's recorded local-trunk mode, not the registry's direct-PR: $out"
+[ "$(sed -n 's/^mode=//p' "$HOME_DIR/state/$lt_id.meta")" = local-trunk ] || fail "T5 the relaunch must keep the recorded local-trunk mode"
+ship local-trunk
+expect_code 1 "$rc" "T5 a fresh local-trunk spawn on a project no longer registered local-trunk must be refused: $out"
+assert_contains "$out" "requires a registered local-trunk project" "T5 the fresh refusal must say why"
+pass "T5 a local-trunk relaunch survives the registry leaving local-trunk, and a fresh spawn is still refused"
 
 printf 'jg-trunk-spawn: ok\n'

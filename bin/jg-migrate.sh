@@ -59,8 +59,8 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--home', required=True, help='the single home to migrate')
 p.add_argument('--slice', default='records', help='journal slice name (default: records)')
 g = p.add_mutually_exclusive_group(required=True)
-for mode in ('check', 'apply', 'verify', 'rollback'):
-    g.add_argument('--' + mode, action='store_true')
+for flag in ('--check', '--apply', '--verify', '--rollback'):
+    g.add_argument(flag, action='store_true')
 a = p.parse_args()
 home = pathlib.Path(a.home).resolve()
 if not home.is_dir():
